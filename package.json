@@ -1,0 +1,25 @@
+{
+  "name": "@evs-chris/ts-pg-dao",
+  "version": "0.0.1",
+  "private": true,
+  "main": "runtime/main.js",
+  "typings": "runtime/main.d.ts",
+  "dependencies": {
+    "pg": "^7",
+    "typescript": "^2.7",
+    "fs-extra": "^5",
+    "commander": "^2",
+    "import-cwd": "^2"
+  },
+  "devDependencies": {
+    "@types/fs-extra": "^5",
+    "@types/pg": "^7"
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w"
+  },
+  "bin": {
+    "ts-pg-dao": "./runtime/cli.js"
+  }
+}
