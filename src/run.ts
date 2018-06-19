@@ -436,7 +436,7 @@ function processLoader(query: ProcessQuery, alias: Alias, depth: Depth = { n: 0 
     alias.include.forEach(i => {
       const n = ++depth.n;
       const deep = processLoader(query, query.aliases[i.name], depth);
-      
+
       tpl += `if (!o${r || ''}[${JSON.stringify(i.name)}]) o${r || ''}[${JSON.stringify(i.name)}] = ${i.type === 'many' ? '[]' : 'null'};${deep}
       `;
       if (i.type === 'one') {
