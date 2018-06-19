@@ -1,9 +1,19 @@
 {
   "name": "@evs-chris/ts-pg-dao",
   "version": "0.0.1",
-  "private": true,
   "main": "runtime/main.js",
   "typings": "runtime/main.d.ts",
+  "description": "Generate TypeScript DAO classes for PostgreSQL tables using a typed config DSL",
+  "homepage": "https://github.com/evs-chris/ts-pg-dao",
+  "bugs": "https://github.com/evs-chris/ts-pg-dao/issues",
+  "license": "MIT",
+  "author": {
+    "name": "Chris Reeves"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/evs-chris/ts-pg-dao.git"
+  },
   "dependencies": {
     "pg": "^7",
     "typescript": "^2.7",

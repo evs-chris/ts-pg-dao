@@ -412,7 +412,7 @@ function buildLoader(query: ProcessQuery): { loader: string, interface: string }
 
   if (query.singular) {
     tpl += `
-    if (res.length < 0) throw new Error('${query.owner.name} not found');
+    if (res.length < 1) throw new Error('${query.owner.name} not found');
     if (res.length > 1) throw new Error('Too many ${query.owner.name} results found');
     return res[0];`;
   } else {
@@ -436,7 +436,7 @@ function processLoader(query: ProcessQuery, alias: Alias, depth: Depth = { n: 0 
     alias.include.forEach(i => {
       const n = ++depth.n;
       const deep = processLoader(query, query.aliases[i.name], depth);
-      console.log(deep)
+      
       tpl += `if (!o${r || ''}[${JSON.stringify(i.name)}]) o${r || ''}[${JSON.stringify(i.name)}] = ${i.type === 'many' ? '[]' : 'null'};${deep}
       `;
       if (i.type === 'one') {
