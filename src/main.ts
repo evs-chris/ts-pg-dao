@@ -89,6 +89,11 @@ export class Field {
     return this;
   }
 
+  default(value: string): Field {
+    this.field.default = value;
+    return this;
+  }
+
   elide(b: boolean = true): Field {
     this.field.elide = b;
     return this;
@@ -205,7 +210,7 @@ export interface Column {
   optlock?: boolean;
 }
 
-export type TSType = 'Date' | 'number' | 'string' | '{}' | 'boolean' | 'Date[]' | 'number[]' | 'string[]' | '{}[]' | 'boolean[]' | 'any' | 'any[]';
+export type TSType = 'Date' | 'number' | 'string' | 'any' | 'boolean' | 'Date[]' | 'number[]' | 'string[]' | 'any[]' | 'boolean[]' | 'any' | 'any[]';
 export const Types: { [key: string]: TSType } = {
   int2: 'number',
   int4: 'number',
@@ -216,8 +221,8 @@ export const Types: { [key: string]: TSType } = {
   date: 'Date',
   timestamp: 'Date',
   timestamptz: 'Date',
-  json: '{}',
-  jsonb: '{}',
+  json: 'any',
+  jsonb: 'any',
   varchar: 'string',
   char: 'string',
   bpchar: 'string',
@@ -233,8 +238,8 @@ export const Types: { [key: string]: TSType } = {
   _date: 'Date[]',
   _timestamp: 'Date[]',
   _timestamptz: 'Date[]',
-  _json: '{}[]',
-  _jsonb: '{}[]',
+  _json: 'any[]',
+  _jsonb: 'any[]',
   _varchar: 'string[]',
   _char: 'string[]',
   _bpchar: 'string[]',
@@ -299,7 +304,7 @@ export class Builder {
                 if (num) col.default = num[1];
                 break;
 
-              case '{}':
+              case 'any':
                 const obj = /^'([^']+)'::json/.exec(col.pgdefault);
                 if (obj) col.default = obj[1];
                 break;

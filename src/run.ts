@@ -5,7 +5,7 @@ import { BuildConfig, Config, Model, Column, Query, Output, MergedOutput, SplitO
 import * as requireCwd from 'import-cwd';
 import * as pg from 'pg';
 
-export async function config(file): Promise<BuildConfig> {
+export async function config(file): Promise<BuildConfig|BuildConfig[]> {
   const input = await fs.readFile(file, { encoding: 'utf8' });
   const output = ts.transpileModule(input, {
     compilerOptions: {
@@ -23,10 +23,10 @@ export async function config(file): Promise<BuildConfig> {
   (new Function('exports', 'require', '__filename', '__dirname', output.outputText))(config, requireCwd, path.resolve(file), path.dirname(path.resolve(file)));
 
   if (typeof config.default !== 'object' || typeof config.default.then !== 'function') {
-    throw new Error('Config file should export a default Promise<BuildConfig>.');
+    throw new Error('Config file should export a default Promise<BuildConfig|BuildConfig[]>.');
   }
 
-  return config.default as Promise<BuildConfig>
+  return config.default as Promise<BuildConfig|BuildConfig[]>
 }
 
 function isPathy(output: Output): output is MergedOutput {
@@ -74,7 +74,7 @@ export async function write(config: BuildConfig): Promise<void> {
         if (res.others.length) {
           res.others.forEach(o => {
             if (!~model.extraImports.indexOf(o)) model.extraImports.push(o);
-          })
+          });
         };
         
         await client.query(`PREPARE __pg_dao_check_stmt AS ${res.sql}; DEALLOCATE __pg_dao_check_stmt;`);

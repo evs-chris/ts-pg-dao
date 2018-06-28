@@ -3,6 +3,7 @@ import * as cli from 'commander';
 import * as path from 'path';
 import * as fs from 'fs-extra';
 import { config, write } from './run';
+import { BuildConfig } from './main';
 
 async function findConfig(dir): Promise<string> {
   try {
@@ -22,8 +23,14 @@ cli
 
 (async function() {
   const file = cli.file || await findConfig(path.resolve('.'));
-  const cfg = await config(file);
-  await write(cfg);
+  const res = await config(file);
+  let cfg: BuildConfig[];
+  if (Array.isArray(res)) cfg = res;
+  else cfg = [res];
+
+  for (let i = 0; i < cfg.length; i++) {
+    await write(cfg[i]);
+  }
 })().then(null, e => {
   console.error(e);
 });
