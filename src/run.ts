@@ -106,6 +106,7 @@ export async function write(config: BuildConfig): Promise<void> {
   }
 }
 
+const dates = ['timestamp', 'date'];
 function serverModel(config: BuildConfig, model: ProcessModel): string {
   let tpl = `import * as dao from '@evs-chris/ts-pg-dao/runtime';${model.extraImports && model.extraImports.length ? '\n' + model.extraImports.map(o => `import ${o} from './${o}';`).join('\n') + '\n' : ''}${model.serverOuter ? `\n${model.serverOuter}` : ''}
 export default class ${model.name} {
@@ -115,6 +116,9 @@ export default class ${model.name} {
 
   tpl += `
   static async save(con: dao.Connection, model: ${model.name}): Promise<void> {
+    ${model.fields.filter(f => ~dates.indexOf(f.pgtype)).map(f => `if (typeof model.${f.name} === 'string') model.${f.name} = new Date(model.${f.name});
+    `).join('')}
+
     if (${model.fields.filter(f => f.pkey || f.optlock).map(f => `model.${f.name} !== undefined`).join(' && ')}) {${updateMembers(model, '      ')}
 
       if (con.inTransaction) {
@@ -216,7 +220,7 @@ function updateMembers(model: Model, prefix: string): string {
   res += `\n${prefix}sql += sets.join(', ');\n\n${prefix}const count = params.length;`;
   const where = model.fields.filter(f => f.pkey || f.optlock);
   res += `\n${prefix}params.push(${where.map(f => `model.${f.alias || f.name}`).join(', ')});`;
-  res += `\n${prefix}sql += \` WHERE ${where.map((f, i) => `${f.name} = $\${count + ${i + 1}}`).join(' AND ')}\`;`
+  res += `\n${prefix}sql += \` WHERE ${where.map((f, i) => `${f.optlock ? `date_trunc('millisecond', ${f.name})` : f.name} = $\${count + ${i + 1}}`).join(' AND ')}\`;`
 
   return res;
 }
@@ -291,6 +295,11 @@ function processQuery(config: Config, start: Query): ProcessQueryResult {
     aliases[alias || tbl] = entry;
     return `${tbl}${alias ? ` AS ${alias}` : ''} `;
   });
+
+  if (!root) {
+    query.root = root = { model: query.owner, prefix: '', alias: query.owner.table, root: true };
+    aliases[root.alias] = root;
+  }
 
   // compute includes and select lists if available
   if (query.include && root) {
