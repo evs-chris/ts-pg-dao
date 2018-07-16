@@ -283,6 +283,8 @@ function processQuery(config: Config, start: Query): ProcessQueryResult {
   const aliases: AliasMap = query.aliases = {};
   let root: Alias;
 
+  if (start.scalar && !start.owner.cols.find(c => c.name === start.scalar)) throw new Error(`Scalar query ${query.owner.name}.${query.name} must return a field from ${query.owner.table}.`);
+
   let sql = query.sql.replace(params, (str, name) => {
     let p, i;
     if (!query.params || !(p = query.params.find(p => p.name === name))) throw new Error(`Query ${query.owner.name}.${query.name} references parameter ${name} that is not defined.`);
@@ -354,7 +356,7 @@ function processQuery(config: Config, start: Query): ProcessQueryResult {
   }
 
   const res: ProcessQueryResult = {
-    method: `  static async ${query.name}(con: dao.Connection, params: { ${parms.map(p => `${p.name}${p.default ? '?' : ''}: ${p.type || 'string'}`).join(', ')} }${defaulted ? ' = {}' : ''}): Promise<${query.result ? query.result : query.owner.name}${query.singular ? '' : '[]'}> {
+    method: `  static async ${query.name}(con: dao.Connection, params: { ${parms.map(p => `${p.name}${p.default ? '?' : ''}: ${p.type || 'string'}`).join(', ')} }${defaulted ? ' = {}' : ''}): Promise<${query.result ? query.result : query.scalar ? loader.interface : query.owner.name}${query.singular ? '' : '[]'}> {
     const query = await con.query(__${query.name}_sql, [${parms.map(p => p.default ?
       `${defaulted ? 'params && ' : ''}${JSON.stringify(p.name)} in params ? params[${JSON.stringify(p.name)}] : ${p.default}` :
       `params[${JSON.stringify(p.name)}]`).join(', ')}]);
@@ -424,7 +426,8 @@ function buildLoader(query: ProcessQuery): { loader: string, interface: string }
   let tpl = `
     const res = [];
     const cache: dao.Cache = {};
-    query.rows.forEach(r => {${processLoader(query, query.root)}if (!~res.indexOf(o)) res.push(o);
+    query.rows.forEach(r => {${query.scalar ? `
+      res.push(r[${JSON.stringify((query.root.prefix || '') + query.scalar)}]);` : `${processLoader(query, query.root)}if (!~res.indexOf(o)) res.push(o);`}
     });
   `;
 
@@ -438,7 +441,7 @@ function buildLoader(query: ProcessQuery): { loader: string, interface: string }
     return res;`;
   }
 
-  return { loader: tpl, interface: query.root.type };
+  return { loader: tpl, interface: query.scalar ? query.owner.cols.find(c => c.name === query.scalar).type : query.root.type };
 }
 
 interface Depth { n: number };

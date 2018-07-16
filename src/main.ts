@@ -133,6 +133,7 @@ export interface QueryOptions {
   include?: IncludeMap;
   singular?: boolean;
   result?: string;
+  scalar?: string;
 }
 
 export class Query {
@@ -143,6 +144,7 @@ export class Query {
   include?: IncludeMap;
   singular?: boolean;
   result?: string;
+  scalar?: string;
 
   constructor(owner: Model, options: QueryOptions) {
     this.owner = owner;
@@ -152,6 +154,7 @@ export class Query {
     this.include = options.include;
     this.singular = options.singular;
     this.result = options.result;
+    this.scalar = options.scalar;
   }
 }
 
