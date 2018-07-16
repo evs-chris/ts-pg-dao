@@ -114,8 +114,17 @@ export default class ${model.name} {
 
   tpl += modelProps(config, model);
 
+  Object.keys(model.hooks).forEach(h => {
+    if (typeof model.hooks[h] === 'function') {
+      tpl += `  protected static ${h}: (item: ${model.name}) => void = ${reindent(model.hooks[h].toString(), '  ')}\n`;
+    }
+  });
+
   tpl += `
   static async save(con: dao.Connection, model: ${model.name}): Promise<void> {
+    if (!model) throw new Error('Model is required');${model.hooks.beforesave ? `
+    ${model.name}.beforesave(model);` : ''}
+
     ${model.fields.filter(f => ~dates.indexOf(f.pgtype)).map(f => `if (typeof model.${f.name} === 'string') model.${f.name} = new Date(model.${f.name});
     `).join('')}
 
@@ -461,3 +470,9 @@ function processLoader(query: ProcessQuery, alias: Alias, depth: Depth = { n: 0 
   }
   return tpl;
 }
+
+function reindent(fn: string, prefix: string): string {
+  const lines = fn.split('\n');
+  const indent = lines[lines.length - 1].replace(/^(\s*).*/, '$1');
+  return fn.replace(new RegExp(`^${indent}`, 'gm'), prefix);
+} 

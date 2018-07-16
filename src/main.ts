@@ -23,6 +23,11 @@ export interface ModelOpts {
   name?: string;
 }
 
+export type Hook = (any) => void;
+export interface Hooks {
+  beforesave?: Hook
+}
+
 export class Model {
   constructor(table: string, fields: Column[], opts: ModelOpts = {}) {
     this.name = opts.name || table;
@@ -36,6 +41,8 @@ export class Model {
   table: string;
   /** The relevant fields to use in the model */
   fields: Column[];
+
+  hooks: Hooks = {};
 
   get pkeys(): Column[] {
     return this.fields.filter(f => f.pkey);
@@ -66,6 +73,10 @@ export class Model {
       if (alias) return `"${alias}"."${c.name}" "${alias}__${c.name}"`;
       else return `"${c.name}"`;
     }).join(', ');
+  }
+
+  hook(name: keyof Hooks, fn: Hook) {
+    this.hooks[name] = fn;
   }
 
   static from(table: Table, opts: ModelOpts = {}) {
