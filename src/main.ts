@@ -288,7 +288,8 @@ export class Builder {
         left join pg_catalog.pg_attrdef d on (a.attrelid, a.attnum) = (d.adrelid, d.adnum)
         where c.relname = $3 and a.attnum >= 0
         and (n.nspname = $2)
-        and a.attisdropped = false;`, ['p', schema, name])).rows.map(r => {
+        and a.attisdropped = false
+        order by a.attname asc;`, ['p', schema, name])).rows.map(r => {
           const col: Column = {
             name: r.name, nullable: r.nullable, pkey: r.pkey, pgtype: r.type, type: r.type[0] === '_' ? 'any[]' : 'any', elidable: false
           }
