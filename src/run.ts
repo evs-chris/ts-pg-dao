@@ -99,7 +99,7 @@ export async function write(config: BuildConfig): Promise<void> {
     console.log(`\twriting server index to ${server}...`);
     await fs.writeFile(server, tpl);
     if (!pathy) {
-      const client = path.join(clientPath, 'index.ts');
+      const client = path.join(clientPath, typeof config.index === 'string' ? config.index : 'index.ts');
       console.log(`\twriting client index to ${client}...`);
       await fs.writeFile(client, tpl);
     }
@@ -448,7 +448,7 @@ interface Depth { n: number };
 function processLoader(query: ProcessQuery, alias: Alias, depth: Depth = { n: 0 }): string {
   const r = depth.n;
   let tpl = `
-      const o${r || ''}: object = ${alias.model.name}.load(r, null${alias.prefix ? `, ${JSON.stringify(alias.prefix)}` : '\'\''}, cache);${!r ? '\n\n      ' : ''}`;
+      const o${r || ''}: object = ${alias.model.name}.load(r, null, ${alias.prefix ? JSON.stringify(alias.prefix) : '\'\''}, cache);${!r ? '\n\n      ' : ''}`;
   if (alias.extra && alias.extra.length) {
     alias.extra.forEach(e => tpl += `o${r || ''}[${JSON.stringify(e.name)}] = r[${JSON.stringify(e.name)}];
       `);
