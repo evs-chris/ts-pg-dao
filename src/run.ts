@@ -95,7 +95,7 @@ export async function write(config: BuildConfig): Promise<void> {
 
   if (config.index) {
     const tpl = models.map((m: ProcessModel) => `export { default as ${m.name}${m.extraTypes.length ? `, ${m.extraTypes.map(t => t[0]).join(', ')}` : ''} } from './${m.name}';`).join('\n');
-    const server = path.join(serverPath, 'index.ts');
+    const server = path.join(serverPath, typeof config.index === 'string' ? config.index : 'index.ts');
     console.log(`\twriting server index to ${server}...`);
     await fs.writeFile(server, tpl);
     if (!pathy) {

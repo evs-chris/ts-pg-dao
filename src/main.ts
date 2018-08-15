@@ -3,7 +3,7 @@ import * as pg from 'pg';
 export interface Config {
   output: Output;
   models: Model[];
-  index?: boolean;
+  index?: boolean|string;
 }
 
 export interface BuildConfig extends Config {
