@@ -28,6 +28,11 @@ export interface Hooks {
   beforesave?: Hook
 }
 
+export interface StatusFlags {
+  load?: string|false;
+  change?: string|false;
+}
+
 export class Model {
   constructor(table: string, fields: Column[], opts: ModelOpts = {}) {
     this.name = opts.name || table;
@@ -43,6 +48,8 @@ export class Model {
   fields: Column[];
 
   hooks: Hooks = {};
+
+  flags: StatusFlags = {};
 
   get pkeys(): Column[] {
     return this.fields.filter(f => f.pkey);

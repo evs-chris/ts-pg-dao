@@ -112,6 +112,14 @@ function serverModel(config: BuildConfig, model: ProcessModel): string {
 export default class ${model.name} {
 `;
 
+  const loadFlag = ((!model.flags.load && model.flags.load !== false) || model.flags.load) ? model.flags.load || '__loaded' : '';
+  const changeFlag = ((!model.flags.change && model.flags.change !== false) || model.flags.change) ? model.flags.change || '__changed' : '';
+
+  if (loadFlag) tpl += `  ${loadFlag}?: boolean;
+`;
+  if (changeFlag) tpl += `  ${changeFlag}?: boolean;
+`;
+
   tpl += modelProps(config, model);
 
   Object.keys(model.hooks).forEach(h => {
@@ -130,23 +138,22 @@ export default class ${model.name} {
 
     if (${model.fields.filter(f => f.pkey || f.optlock).map(f => `model.${f.name} !== undefined`).join(' && ')}) {${updateMembers(model, '      ')}
 
-      if (con.inTransaction) {
-        await con.begin();
-        try {
-          const res = await con.query(sql, params);
-          if (res.rowCount < 1) throw new Error('No matching row to update for ${model.name}');
-          if (res.rowCount > 1) throw new Error('Too many matching rows updated for ${model.name}');
-        } catch (e) {
-          await con.rollback();
-          throw e;
-        }
-        await con.commit();
-      } else {
+      const transact = !con.inTransaction;
+      if (transact) await con.begin();
+      try {
         const res = await con.query(sql, params);
         if (res.rowCount < 1) throw new Error('No matching row to update for ${model.name}');
         if (res.rowCount > 1) throw new Error('Too many matching rows updated for ${model.name}');
-      }${model.fields.find(f => f.optlock) ? `${model.fields.filter(f => f.optlock).map(f => `\n      model.${f.alias || f.name} = lock;`).join('')}` : ''}
-    } else {${insertMembers(model, '      ')}
+        if (transact) await con.commit();${changeFlag ? `
+        model.${changeFlag} = false;` : ''}
+      } catch (e) {
+        if (transact) await con.rollback();
+        throw e;
+      }
+      ${model.fields.find(f => f.optlock) ? `${model.fields.filter(f => f.optlock).map(f => `\n      model.${f.alias || f.name} = lock;`).join('')}` : ''}
+    } else {${insertMembers(model, '      ')}${loadFlag ? `
+      model.${loadFlag} = false;` : ''}${changeFlag ? `
+      model.${changeFlag} = false` : ''}
     }
   }
   
@@ -174,7 +181,8 @@ export default class ${model.name} {
     if (${model.pkeys.map(k => `row[prefix + ${JSON.stringify(k.name)}] == null`).join(' && ')}) return;
     if (cache && (model = cache[${model.name}.keyString(row, prefix)])) return model;
     if (!model) model = {};
-    if (cache) cache[${model.name}.keyString(row, prefix)] = model;
+    if (cache) cache[${model.name}.keyString(row, prefix)] = model;${loadFlag ? `
+    model.${loadFlag} = true;` : ''}
 
 `
 
@@ -196,6 +204,14 @@ function clientModel(config: Config, model: ProcessModel): string {
     model.extraImports && model.extraImports.length ? model.extraImports.map(o => `import ${o} from './${o}';`).join('\n') + '\n' : ''
 }${model.extraTypes && model.extraTypes.length ? '\n' + model.extraTypes.map(([n, t]) => `export type ${n} = ${t};`).join('\n') + '\n' : ''
 }export default class ${model.name} {\n`;
+
+  const loadFlag = ((!model.flags.load && model.flags.load !== false) || model.flags.load) ? model.flags.load || '__loaded' : '';
+  const changeFlag = ((!model.flags.change && model.flags.change !== false) || model.flags.change) ? model.flags.change || '__changed' : '';
+
+  if (loadFlag) tpl += `  ${loadFlag}?: boolean;
+`;
+  if (changeFlag) tpl += `  ${changeFlag}?: boolean;
+`;
 
   tpl += modelProps(config, model, true);
 
