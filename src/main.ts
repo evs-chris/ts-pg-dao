@@ -25,12 +25,14 @@ export interface ModelOpts {
 
 export type Hook = (any) => void;
 export interface Hooks {
-  beforesave?: Hook
+  beforesave?: Hook;
+  beforedelete?: Hook;
 }
 
 export interface StatusFlags {
   load?: string|false;
   change?: string|false;
+  remove?: string|false;
 }
 
 export class Model {

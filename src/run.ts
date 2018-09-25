@@ -114,10 +114,13 @@ export default class ${model.name} {
 
   const loadFlag = ((!model.flags.load && model.flags.load !== false) || model.flags.load) ? model.flags.load || '__loaded' : '';
   const changeFlag = ((!model.flags.change && model.flags.change !== false) || model.flags.change) ? model.flags.change || '__changed' : '';
+  const removeFlag = ((!model.flags.remove && model.flags.remove !== false) || model.flags.remove) ? model.flags.remove || '__removed' : '';
 
   if (loadFlag) tpl += `  ${loadFlag}?: boolean;
 `;
   if (changeFlag) tpl += `  ${changeFlag}?: boolean;
+`;
+  if (removeFlag) tpl += `  ${removeFlag}?: boolean;
 `;
 
   tpl += modelProps(config, model);
@@ -154,6 +157,23 @@ export default class ${model.name} {
     } else {${insertMembers(model, '      ')}${loadFlag ? `
       model.${loadFlag} = false;` : ''}${changeFlag ? `
       model.${changeFlag} = false` : ''}
+    }
+  }
+
+  static async delete(con: dao.Connection, model: ${model.name}): Promise<void> {
+    if (!model) throw new Error('Model is required');${model.hooks.beforedelete ? `
+    ${model.name}.beforeDelete(model);` : ''}
+
+    const transact = !con.inTransaction;
+    if (transact) await con.begin();
+    try {
+      const params = [${model.fields.filter(f => f.pkey || f.optlock).map(f => `model.${f.name}`).join(', ')}];
+      const res = await con.query('delete from "${model.table}" where ${model.fields.filter(f => f.pkey || f.optlock).map((f, i) => `"${f.name}" = $${i + 1}`).join(' AND ')}', params);
+      if (res.rowCount < 1) throw new Error('No matching row to delete for ${model.name}');
+      if (res.rowCount > 1) throw new Error('Too many matching rows deleted for ${model.name}');
+    } catch (e) {
+      if (transact) await con.rollback();
+      throw e;
     }
   }
   
@@ -207,10 +227,13 @@ function clientModel(config: Config, model: ProcessModel): string {
 
   const loadFlag = ((!model.flags.load && model.flags.load !== false) || model.flags.load) ? model.flags.load || '__loaded' : '';
   const changeFlag = ((!model.flags.change && model.flags.change !== false) || model.flags.change) ? model.flags.change || '__changed' : '';
+  const removeFlag = ((!model.flags.remove && model.flags.remove !== false) || model.flags.remove) ? model.flags.remove || '__removed' : '';
 
   if (loadFlag) tpl += `  ${loadFlag}?: boolean;
 `;
   if (changeFlag) tpl += `  ${changeFlag}?: boolean;
+`;
+  if (removeFlag) tpl += `  ${removeFlag}?: boolean;
 `;
 
   tpl += modelProps(config, model, true);
@@ -232,12 +255,16 @@ function modelProps(config: Config, model: Model, client: boolean = false): stri
   return tpl;
 }
 
+function colToParam(f) {
+  return `${f.optlock ? 'new Date()' : f.type === 'any' ? `Array.isArray(model.${f.alias || f.name}) ? JSON.stringify(model.${f.alias || f.name}) : model.${f.alias || f.name}` : `model.${f.alias || f.name}`}`;
+}
+
 function updateMembers(model: Model, prefix: string): string {
   let res = `\n${prefix}const params = [];\n${prefix}const sets = [];\n${prefix}let sql = 'UPDATE ${model.table} SET ';`;
   if (model.fields.find(f => f.optlock)) res += `\n${prefix}const lock = new Date();`;
   model.fields.forEach(f => {
     if (!f.pkey) {
-      res += `\n${prefix}if (model.hasOwnProperty('${f.alias || f.name}')) { params.push(${f.optlock ? 'new Date()' : `model.${f.alias || f.name}`}); sets.push('${f.name} = $' + params.length); }`;
+      res += `\n${prefix}if (model.hasOwnProperty('${f.alias || f.name}')) { params.push(${colToParam(f)}); sets.push('${f.name} = $' + params.length); }`;
       if (!f.elidable) res += `\n${prefix}else throw new Error('Missing non-elidable field ${f.alias || f.name}');`;
     }
   });
@@ -253,7 +280,7 @@ function updateMembers(model: Model, prefix: string): string {
 function insertMembers(model: Model, prefix: string): string {
   let res = `\n${prefix}const params = [];\n${prefix}const sets = [];\n${prefix}let sql = 'INSERT INTO ${model.table} ';`;
   model.fields.forEach(f => {
-    res += `\n${prefix}if (model.hasOwnProperty('${f.alias || f.name}')) { params.push(${f.optlock ? 'new Date()' : `model.${f.alias || f.name}`}); sets.push('${f.name}'); }`;
+    res += `\n${prefix}if (model.hasOwnProperty('${f.alias || f.name}')) { params.push(${colToParam(f)}); sets.push('${f.name}'); }`;
     if (!f.elidable) res += `\n${prefix}else throw new Error('Missing non-elidable field ${f.alias || f.name}');`;
   });
 
