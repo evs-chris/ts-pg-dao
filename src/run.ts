@@ -110,6 +110,7 @@ const dates = ['timestamp', 'date'];
 function serverModel(config: BuildConfig, model: ProcessModel): string {
   let tpl = `import * as dao from '@evs-chris/ts-pg-dao/runtime';${model.extraImports && model.extraImports.length ? '\n' + model.extraImports.map(o => `import ${o} from './${o}';`).join('\n') + '\n' : ''}${model.serverOuter ? `\n${model.serverOuter}` : ''}
 export default class ${model.name} {
+  static get table() { return ${JSON.stringify(model.table)}; }
 `;
 
   const loadFlag = ((!model.flags.load && model.flags.load !== false) || model.flags.load) ? model.flags.load || '__loaded' : '';
