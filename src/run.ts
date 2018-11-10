@@ -157,7 +157,7 @@ export default class ${model.name} {
       ${model.fields.find(f => f.optlock) ? `${model.fields.filter(f => f.optlock).map(f => `\n      model.${f.alias || f.name} = lock;`).join('')}` : ''}
     } else {${insertMembers(model, '      ')}${loadFlag ? `
       model.${loadFlag} = false;` : ''}${changeFlag ? `
-      model.${changeFlag} = false` : ''}
+      model.${changeFlag} = false;` : ''}
     }
   }
 
@@ -264,13 +264,15 @@ function updateMembers(model: Model, prefix: string): string {
   let res = `\n${prefix}const params = [];\n${prefix}const sets = [];\n${prefix}let sql = 'UPDATE ${model.table} SET ';`;
   if (model.fields.find(f => f.optlock)) res += `\n${prefix}const lock = new Date();`;
   model.fields.forEach(f => {
-    if (!f.pkey) {
+    if (!f.pkey && !f.optlock) {
       res += `\n${prefix}if (model.hasOwnProperty('${f.alias || f.name}')) { params.push(${colToParam(f)}); sets.push('${f.name} = $' + params.length); }`;
       if (!f.elidable) res += `\n${prefix}else throw new Error('Missing non-elidable field ${f.alias || f.name}');`;
     }
   });
 
-  res += `\n${prefix}sql += sets.join(', ');\n\n${prefix}const count = params.length;`;
+  const locks = model.fields.filter(f => f.optlock);
+
+  res += `\n${prefix}sql += sets.join(', ');\n${prefix}sql += \`\${${locks.length} && sets.length ? ', ' : ''}${locks.map(l => `${l.name} = now()`).join(', ')}\`;\n\n${prefix}const count = params.length;`;
   const where = model.fields.filter(f => f.pkey || f.optlock);
   res += `\n${prefix}params.push(${where.map(f => `model.${f.alias || f.name}`).join(', ')});`;
   res += `\n${prefix}sql += \` WHERE ${where.map((f, i) => `${f.optlock ? `date_trunc('millisecond', ${f.name})` : f.name} = $\${count + ${i + 1}}`).join(' AND ')}\`;`
@@ -281,12 +283,15 @@ function updateMembers(model: Model, prefix: string): string {
 function insertMembers(model: Model, prefix: string): string {
   let res = `\n${prefix}const params = [];\n${prefix}const sets = [];\n${prefix}let sql = 'INSERT INTO ${model.table} ';`;
   model.fields.forEach(f => {
-    res += `\n${prefix}if (model.hasOwnProperty('${f.alias || f.name}')) { params.push(${colToParam(f)}); sets.push('${f.name}'); }`;
-    if (!f.elidable) res += `\n${prefix}else throw new Error('Missing non-elidable field ${f.alias || f.name}');`;
+    if (!f.optlock) {
+      res += `\n${prefix}if (model.hasOwnProperty('${f.alias || f.name}')) { params.push(${colToParam(f)}); sets.push('${f.name}'); }`;
+      if (!f.elidable) res += `\n${prefix}else throw new Error('Missing non-elidable field ${f.alias || f.name}');`;
+    }
   });
 
   const ret = model.fields.filter(f => f.pkey || f.optlock || (f.elidable && f.pgdefault));
-  res += `\n${prefix}sql += \`(\${sets.join(', ')}) VALUES (\${sets.map((n, i) => \`$\${i + 1}\`)}) RETURNING ${ret.map(f => f.name).join(', ')};\`;`;
+  const locks = model.fields.filter(f => f.optlock);
+  res += `\n${prefix}sql += \`(\${sets.join(', ')}\${${locks.length} && sets.length ? ', ' : ''}${locks.map(l => l.name).join(', ')}) VALUES (\${sets.map((n, i) => \`$\${i + 1}\`)}\${${locks.length} && sets.length ? ', ' : ''}${locks.map(l => 'now()').join(', ')}) RETURNING ${ret.map(f => f.name).join(', ')};\`;`;
   res += `\n\n${prefix}const res = (await con.query(sql, params)).rows[0];`
   res += ret.map(f => `\n${prefix}model.${f.alias || f.name} = res.${f.name};`).join('');
 
