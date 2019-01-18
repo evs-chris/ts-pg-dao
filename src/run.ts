@@ -266,7 +266,6 @@ function updateMembers(model: Model, prefix: string): string {
   model.fields.forEach(f => {
     if (!f.pkey && !f.optlock) {
       res += `\n${prefix}if (model.hasOwnProperty('${f.alias || f.name}')) { params.push(${colToParam(f)}); sets.push('${f.name} = $' + params.length); }`;
-      if (!f.elidable) res += `\n${prefix}else throw new Error('Missing non-elidable field ${f.alias || f.name}');`;
     }
   });
 
