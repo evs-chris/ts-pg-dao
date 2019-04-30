@@ -35,6 +35,8 @@ function isPathy(output: Output): output is MergedOutput {
 
 type ProcessModel = Model & { extraTypes?: Array<[string, string]>, extraImports?: string[], serverOuter?: string, serverBody?: string };
 
+const modelImport = /^\s*import\b/;
+
 export async function write(config: BuildConfig): Promise<void> {
   const { models, output } = config;
 
@@ -64,20 +66,30 @@ export async function write(config: BuildConfig): Promise<void> {
       model.extraImports = [];
       model.serverOuter = '';
       model.serverBody = '';
+
+      let i = model._imports.length;
+      while (i--) {
+        if (!modelImport.test(model._imports[i])) model.extraImports.push(model._imports.splice(i, 1)[0]);
+      }
     
-      for (let i = 0; i < model.queries.length; i++) {
+      for (i = 0; i < model.queries.length; i++) {
         const q = model.queries[i];
         const res = processQuery(config, q);
         if (res.interface) model.extraTypes.push(res.interface);
         if (res.outer) model.serverOuter += res.outer + '\n';
         model.serverBody += '\n\n' + res.method;
         if (res.others.length) {
-          res.others.forEach(o => {
-            if (!~model.extraImports.indexOf(o)) model.extraImports.push(o);
-          });
+          for (const o of res.others) {
+            if (!model.extraImports.includes(o)) model.extraImports.push(o);
+          }
         };
         
-        await client.query(`PREPARE __pg_dao_check_stmt AS ${res.sql}; DEALLOCATE __pg_dao_check_stmt;`);
+        try {
+          await client.query(`PREPARE __pg_dao_check_stmt AS ${res.sql}; DEALLOCATE __pg_dao_check_stmt;`);
+        } catch (e) {
+          console.error(`Error processing query ${q.name} for ${model.table} - ${q.sql}\n\n${e.message}`);
+          throw e;
+        }
       }
 
       const server = path.join(serverPath, model.name + '.ts');
@@ -108,7 +120,7 @@ export async function write(config: BuildConfig): Promise<void> {
 
 const dates = ['timestamp', 'date'];
 function serverModel(config: BuildConfig, model: ProcessModel): string {
-  let tpl = `import * as dao from '@evs-chris/ts-pg-dao/runtime';${model.extraImports && model.extraImports.length ? '\n' + model.extraImports.map(o => `import ${o} from './${o}';`).join('\n') + '\n' : ''}${model.serverOuter ? `\n${model.serverOuter}` : ''}
+  let tpl = `import * as dao from '@evs-chris/ts-pg-dao/runtime';${model.extraImports && model.extraImports.length ? '\n' + model.extraImports.map(o => `import ${o} from './${o}';`).join('\n') + '\n' : ''}${model._imports.length ? '\n' + model._imports.join(';\n') + '\n' : ''}${model.serverOuter ? `\n${model.serverOuter}` : ''}
 export default class ${model.name} {
   static get table() { return ${JSON.stringify(model.table)}; }
 `;
@@ -126,11 +138,11 @@ export default class ${model.name} {
 
   tpl += modelProps(config, model);
 
-  Object.keys(model.hooks).forEach(h => {
-    if (typeof model.hooks[h] === 'function') {
-      tpl += `  protected static ${h}: (item: ${model.name}) => void = ${reindent(model.hooks[h].toString(), '  ')}\n`;
+  for (const [name, hook] of Object.entries(model.hooks)) {
+    if (typeof hook === 'function') {
+      tpl += `  protected static ${name}: (item: ${model.name}) => void = ${reindent(hook.toString(), '  ')}\n`;
     }
-  });
+  }
 
   tpl += `
   static async save(con: dao.Connection, model: ${model.name}): Promise<void> {
@@ -178,13 +190,13 @@ export default class ${model.name} {
     }
   }
   
-  ${model.queries.find(q => q.name === 'findById') ? '' : `static async findById(con: dao.Connection, ${model.pkeys.map(k => `${k.alias || k.name}: ${k.type}`).join(', ')}): Promise<${model.name}> {
-    return await ${model.name}.findOne(con, '${model.pkeys.map((k, i) => `${k.name} = $${i + 1}`).join(' AND ')}', [${model.pkeys.map(k => k.alias || k.name).join(', ')}])
+  ${model.queries.find(q => q.name === 'findById') ? '' : `static async findById(con: dao.Connection, ${model.pkeys.map(k => `${k.alias || k.name}: ${k.type}`).join(', ')}, optional: boolean = false): Promise<${model.name}> {
+    return await ${model.name}.findOne(con, '${model.pkeys.map((k, i) => `${k.name} = $${i + 1}`).join(' AND ')}', [${model.pkeys.map(k => k.alias || k.name).join(', ')}], optional)
   }
 
-  `}static async findOne(con: dao.Connection, where: string = '', params: any[] = []): Promise<${model.name}> {
+  `}static async findOne(con: dao.Connection, where: string = '', params: any[] = [], optional: boolean = false): Promise<${model.name}> {
     const res = await ${model.name}.findAll(con, where, params);
-    if (res.length < 1) throw new Error('${model.name} not found')
+    if (res.length < 1 && !optional) throw new Error('${model.name} not found')
     if (res.length > 1) throw new Error('Too many results found');
     return res[0];
   }
@@ -215,7 +227,15 @@ export default class ${model.name} {
     return model;
   }`;
 
-  tpl += `${model.serverBody}\n}`;
+  tpl += `${model.serverBody}\n`;
+
+  if (model.codeMap.serverInner) tpl += `\n\n${reindent(model.codeMap.serverInner, '  ')}\n`;
+  if (model.codeMap.bothInner) tpl += `\n\n${reindent(model.codeMap.bothInner, '  ')}\n`;
+
+  tpl += '}';
+
+  if (model.codeMap.serverOuter) tpl += `\n\n${model.codeMap.serverOuter}\n`;
+  if (model.codeMap.bothOuter) tpl += `\n\n${model.codeMap.bothOuter}\n`;
 
   return tpl;  
 }
@@ -223,7 +243,7 @@ export default class ${model.name} {
 function clientModel(config: Config, model: ProcessModel): string {
   let tpl = `${
     model.extraImports && model.extraImports.length ? model.extraImports.map(o => `import ${o} from './${o}';`).join('\n') + '\n' : ''
-}${model.extraTypes && model.extraTypes.length ? '\n' + model.extraTypes.map(([n, t]) => `export type ${n} = ${t};`).join('\n') + '\n' : ''
+}${model._imports.length ? '\n' + model._imports.join(';\n') + '\n' : ''}${model.extraTypes && model.extraTypes.length ? '\n' + model.extraTypes.map(([n, t]) => `export type ${n} = ${t};`).join('\n') + '\n' : ''
 }export default class ${model.name} {\n`;
 
   const loadFlag = ((!model.flags.load && model.flags.load !== false) || model.flags.load) ? model.flags.load || '__loaded' : '';
@@ -239,7 +259,13 @@ function clientModel(config: Config, model: ProcessModel): string {
 
   tpl += modelProps(config, model, true);
 
+  if (model.codeMap.clientInner) tpl += `\n\n${reindent(model.codeMap.clientInner, '  ')}\n`;
+  if (model.codeMap.bothInner) tpl += `\n\n${reindent(model.codeMap.bothInner, '  ')}\n`;
+
   tpl += `}`;
+
+  if (model.codeMap.clientOuter) tpl += `\n\n${model.codeMap.clientOuter}\n`;
+  if (model.codeMap.bothOuter) tpl += `\n\n${model.codeMap.bothOuter}\n`;
 
   return tpl;
 }
@@ -251,6 +277,13 @@ function modelProps(config: Config, model: Model, client: boolean = false): stri
   for (let c = 0; c < model.cols.length; c++) {
     col = model.cols[c];
     tpl += `  ${col.alias || col.name}${col.nullable ? '?' : ''}: ${col.type}${col.default ? ` = ${col.default}` : ''};\n`;
+  }
+
+  if (Object.keys(model._extras).length > 0) {
+    tpl += '\n';
+    for (const [field, type] of Object.entries(model._extras)) {
+      tpl += `  ${field}?: ${type};\n`;
+    }
   }
 
   return tpl;
@@ -281,12 +314,12 @@ function updateMembers(model: Model, prefix: string): string {
 
 function insertMembers(model: Model, prefix: string): string {
   let res = `\n${prefix}const params = [];\n${prefix}const sets = [];\n${prefix}let sql = 'INSERT INTO ${model.table} ';`;
-  model.fields.forEach(f => {
+  for (const f of model.fields) {
     if (!f.optlock) {
       res += `\n${prefix}if (model.hasOwnProperty('${f.alias || f.name}')) { params.push(${colToParam(f)}); sets.push('${f.name}'); }`;
       if (!f.elidable) res += `\n${prefix}else throw new Error('Missing non-elidable field ${f.alias || f.name}');`;
     }
-  });
+  }
 
   const ret = model.fields.filter(f => f.pkey || f.optlock || (f.elidable && f.pgdefault));
   const locks = model.fields.filter(f => f.optlock);
@@ -403,6 +436,11 @@ function processQuery(config: Config, start: Query): ProcessQueryResult {
     if (!aliases[k].root && !~others.indexOf(aliases[k].model.name)) others.push(aliases[k].model.name);
   }
 
+  // manual other imports
+  for (const i of query.imports || []) {
+    if (!others.includes(i)) others.push(i);
+  }
+
   const res: ProcessQueryResult = {
     method: `  static async ${query.name}(con: dao.Connection, params: { ${parms.map(p => `${p.name}${p.default ? '?' : ''}: ${p.type || 'string'}`).join(', ')} }${defaulted ? ' = {}' : ''}): Promise<${query.result ? query.result : query.scalar ? loader.interface : query.owner.name}${query.singular ? '' : '[]'}> {
     const query = await con.query(__${query.name}_sql, [${parms.map(p => p.default ?
@@ -451,7 +489,7 @@ function buildIncludes(query: ProcessQuery, alias: Alias, map: IncludeMap): void
   }
 }
 
-function buildTypes(query: ProcessQuery, alias: Alias): void {
+function buildTypes(query: ProcessQuery, alias: Alias, level: number = 0): void {
   if (alias.type) return;
   let t = '', b = '';
   if (!alias.cols) t = alias.model.name;
@@ -460,9 +498,13 @@ function buildTypes(query: ProcessQuery, alias: Alias): void {
   if (alias.extra) b += `${b.length ? ', ' : ''}${alias.extra.map(e => `${e.name}: ${e.type}`).join(', ')}`;
 
   if (alias.include) {
-    alias.include.forEach(a => buildTypes(query, query.aliases[a.name]));
-    b += `${b.length ? ', ' : ''}${alias.include.map(i => `${i.name}: ${query.aliases[i.name].type}${i.type === 'many' ? '[]' : ''}`).join(', ')}`;
+    for (const a of alias.include) {
+      buildTypes(query, query.aliases[a.name], level + 1);
+    }
+    b += `${b.length ? ', ' : ''}${alias.include.map(i => `${i.name}${i.type === 'many' ? '' : '?'}: ${query.aliases[i.name].type}${i.type === 'many' ? '[]' : ''}`).join(', ')}`;
   }
+
+  if (!level && query.extras && Object.keys(query.extras).length) b += `${b.length ? ', ' : ''}${Object.entries(query.extras).map(([field, type]) => `${field}?: ${type}`).join(', ')}`;
 
   if (t && b) alias.type = `${t} & { ${b} }`;
   else if (t) alias.type = t;
@@ -480,8 +522,11 @@ function buildLoader(query: ProcessQuery): { loader: string, interface: string }
   `;
 
   if (query.singular) {
+    if (!query.optional) {
+      tpl += `
+    if (res.length < 1) throw new Error('${query.owner.name} not found');`;
+    }
     tpl += `
-    if (res.length < 1) throw new Error('${query.owner.name} not found');
     if (res.length > 1) throw new Error('Too many ${query.owner.name} results found');
     return res[0];`;
   } else {
@@ -498,11 +543,13 @@ function processLoader(query: ProcessQuery, alias: Alias, depth: Depth = { n: 0 
   let tpl = `
       const o${r || ''}: object = ${alias.model.name}.load(r, null, ${alias.prefix ? JSON.stringify(alias.prefix) : '\'\''}, cache);${!r ? '\n\n      ' : ''}`;
   if (alias.extra && alias.extra.length) {
-    alias.extra.forEach(e => tpl += `o${r || ''}[${JSON.stringify(e.name)}] = r[${JSON.stringify(e.name)}];
-      `);
+    for (const e of alias.extra) {
+     tpl += `o${r || ''}[${JSON.stringify(e.name)}] = r[${JSON.stringify(e.name)}];
+      `
+    }
   }
   if (alias.include && alias.include.length) {
-    alias.include.forEach(i => {
+    for (const i of alias.include) {
       const n = ++depth.n;
       const deep = processLoader(query, query.aliases[i.name], depth);
 
@@ -517,7 +564,7 @@ function processLoader(query: ProcessQuery, alias: Alias, depth: Depth = { n: 0 
 
       `
       }
-    });
+    }
   }
   return tpl;
 }

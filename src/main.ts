@@ -35,6 +35,22 @@ export interface StatusFlags {
   remove?: string|false;
 }
 
+export interface OptionalExtras {
+  [field: string]: string;
+}
+
+export interface CodeMap {
+  bothInner?: string;
+  bothOuter?: string;
+  clientInner?: string;
+  clientOuter?: string;
+  serverInner?: string;
+  serverOuter?: string;
+}
+
+export type CodeLocation = 'inner'|'outer';
+export type CodeType = 'client'|'server'|'both';
+
 export class Model {
   constructor(table: string, fields: Column[], opts: ModelOpts = {}) {
     this.name = opts.name || table;
@@ -52,6 +68,12 @@ export class Model {
   hooks: Hooks = {};
 
   flags: StatusFlags = {};
+
+  _imports: string[] = [];
+
+  _extras: OptionalExtras = {};
+
+  codeMap: CodeMap = {};
 
   get pkeys(): Column[] {
     return this.fields.filter(f => f.pkey);
@@ -84,12 +106,38 @@ export class Model {
     }).join(', ');
   }
 
-  hook(name: keyof Hooks, fn: Hook) {
+  hook(name: keyof Hooks, fn: Hook): Model {
     this.hooks[name] = fn;
+    return this;
+  }
+
+  imports(...descriptors: string[]): Model {
+    this._imports.push.apply(this._imports, descriptors);
+    return this;
+  }
+
+  extra(field: string, type: string): Model {
+    this._extras[field] = type;
+    return this;
+  }
+
+  extras(fields: OptionalExtras): Model {
+    Object.assign(this._extras, fields);
+    return this;
+  }
+
+  code(code: string, type: CodeType = 'both', location: CodeLocation = 'inner'): Model {
+    this.codeMap[`${type}${location[0].toUpperCase()}${location.substr(1)}`] = code;
+    return this;
   }
 
   static from(table: Table, opts: ModelOpts = {}) {
     return new Model(table.name, table.columns, opts);
+  }
+
+  static async build(builder: Builder, table: string, opts: ModelOpts = {}, schema?: string): Promise<Model> {
+    const t = await builder.table(table, schema);
+    return Model.from(t, opts);
   }
 }
 
@@ -141,8 +189,11 @@ export interface QueryOptions {
   sql: string;
   include?: IncludeMap;
   singular?: boolean;
+  optional?: boolean;
   result?: string;
   scalar?: string;
+  extras?: OptionalExtras;
+  imports?: string[];
 }
 
 export class Query {
@@ -152,8 +203,11 @@ export class Query {
   params?: Param[];
   include?: IncludeMap;
   singular?: boolean;
+  optional?: boolean;
   result?: string;
   scalar?: string;
+  extras?: OptionalExtras;
+  imports?: string[];
 
   constructor(owner: Model, options: QueryOptions) {
     this.owner = owner;
@@ -162,8 +216,11 @@ export class Query {
     this.params = options.params;
     this.include = options.include;
     this.singular = options.singular;
+    this.optional = options.optional;
     this.result = options.result;
     this.scalar = options.scalar;
+    this.extras = options.extras;
+    this.imports = options.imports;
   }
 }
 
