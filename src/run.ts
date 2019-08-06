@@ -92,11 +92,11 @@ export async function write(config: BuildConfig): Promise<void> {
         }
       }
 
-      const server = path.join(serverPath, model.name + '.ts');
+      const server = path.join(serverPath, (model.file || model.name) + '.ts');
       console.log(`\twriting server ${model.name} to ${server}...`);
       await fs.writeFile(server, serverModel(config, model));
       if (!pathy) {
-        const client = path.join(clientPath, model.name + '.ts');
+        const client = path.join(clientPath, (model.file || model.name) + '.ts');
         console.log(`\twriting client ${model.name} to ${client}...`);
         await fs.writeFile(client, clientModel(config, model));
       }
@@ -106,7 +106,7 @@ export async function write(config: BuildConfig): Promise<void> {
   }
 
   if (config.index) {
-    const tpl = models.map((m: ProcessModel) => `export { default as ${m.name}${m.extraTypes.length ? `, ${m.extraTypes.map(t => t[0]).join(', ')}` : ''} } from './${m.name}';`).join('\n');
+    const tpl = models.map((m: ProcessModel) => `export { default as ${m.name}${m.extraTypes.length ? `, ${m.extraTypes.map(t => t[0]).join(', ')}` : ''} } from './${m.file || m.name}';`).join('\n');
     const server = path.join(serverPath, typeof config.index === 'string' ? config.index : 'index.ts');
     console.log(`\twriting server index to ${server}...`);
     await fs.writeFile(server, tpl);

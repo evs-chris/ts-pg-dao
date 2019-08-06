@@ -21,6 +21,7 @@ export type Output = MergedOutput | SplitOutput;
 
 export interface ModelOpts {
   name?: string;
+  file?: string;
 }
 
 export type Hook = (any) => void;
@@ -56,6 +57,7 @@ export class Model {
     this.name = opts.name || table;
     this.table = table;
     this.fields = fields;
+    this.file = opts.file;
   }
 
   /** The name of the model */
@@ -64,6 +66,10 @@ export class Model {
   table: string;
   /** The relevant fields to use in the model */
   fields: Column[];
+  /** The name of the target file
+   * @default name
+   */
+  file?: string;
 
   hooks: Hooks = {};
 
