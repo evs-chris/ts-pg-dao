@@ -406,8 +406,6 @@ export class Builder {
           return col;
         });
 
-        if (!columns.find(c => c.pkey)) throw new Error(`Cannot create model for ${schema}.${name} with no primary key`);
-
         return { name, columns };
     } finally {
       await client.release();

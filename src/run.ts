@@ -125,9 +125,11 @@ export default class ${model.name} {
   static get table() { return ${JSON.stringify(model.table)}; }
 `;
 
+  const hasPkey = model.pkeys.length;
+
   const loadFlag = ((!model.flags.load && model.flags.load !== false) || model.flags.load) ? model.flags.load || '__loaded' : '';
-  const changeFlag = ((!model.flags.change && model.flags.change !== false) || model.flags.change) ? model.flags.change || '__changed' : '';
-  const removeFlag = ((!model.flags.remove && model.flags.remove !== false) || model.flags.remove) ? model.flags.remove || '__removed' : '';
+  const changeFlag = hasPkey && ((!model.flags.change && model.flags.change !== false) || model.flags.change) ? model.flags.change || '__changed' : '';
+  const removeFlag = hasPkey && ((!model.flags.remove && model.flags.remove !== false) || model.flags.remove) ? model.flags.remove || '__removed' : '';
 
   if (loadFlag) tpl += `  ${loadFlag}?: boolean;
 `;
@@ -144,12 +146,12 @@ export default class ${model.name} {
     }
   }
 
-  tpl += `
+  if (hasPkey) {
+    tpl += `
   static async save(con: dao.Connection, model: ${model.name}): Promise<void> {
     if (!model) throw new Error('Model is required');${model.hooks.beforesave ? `
-    ${model.name}.beforesave(model);` : ''}
-
-    ${model.fields.filter(f => ~dates.indexOf(f.pgtype)).map(f => `if (typeof model.${f.name} === 'string') model.${f.name} = new Date(model.${f.name});
+    ${model.name}.beforesave(model);
+    ` : ''}${model.fields.filter(f => ~dates.indexOf(f.pgtype)).map(f => `if (typeof model.${f.name} === 'string') model.${f.name} = new Date(model.${f.name});
     `).join('')}
 
     if (${model.fields.filter(f => f.pkey || f.optlock).map(f => `model.${f.name} !== undefined`).join(' && ')}) {${updateMembers(model, '      ')}
@@ -194,7 +196,24 @@ export default class ${model.name} {
     return await ${model.name}.findOne(con, '${model.pkeys.map((k, i) => `${k.name} = $${i + 1}`).join(' AND ')}', [${model.pkeys.map(k => k.alias || k.name).join(', ')}], optional)
   }
 
-  `}static async findOne(con: dao.Connection, where: string = '', params: any[] = [], optional: boolean = false): Promise<${model.name}> {
+  `}static keyString(row: any, prefix: string = ''): string {
+    return '${model.table}' + ${model.pkeys.map(k => `'_' + (prefix ? row[prefix + '${k.name}'] : row.${k.name})`).join(' + ')}
+  }`;
+  } else {
+    tpl += `
+  static async insert(con: dao.Connection, model: ${model.name}): Promise<void> {
+    if (!model) throw new Error('Model is required');${model.hooks.beforesave ? `
+    ${model.name}.beforesave(model);
+    ` : ''}${model.fields.filter(f => ~dates.indexOf(f.pgtype)).map(f => `if (typeof model.${f.name} === 'string') model.${f.name} = new Date(model.${f.name});
+    `).join('')}
+    ${insertMembers(model, '    ')}${loadFlag ? `
+    model.${loadFlag} = false;` : ''}
+  }
+  `
+  }
+
+  tpl += `
+  static async findOne(con: dao.Connection, where: string = '', params: any[] = [], optional: boolean = false): Promise<${model.name}> {
     const res = await ${model.name}.findAll(con, where, params);
     if (res.length < 1 && !optional) throw new Error('${model.name} not found')
     if (res.length > 1) throw new Error('Too many results found');
@@ -206,15 +225,11 @@ export default class ${model.name} {
     return res.rows.map(r => ${model.name}.load(r, new ${model.name}()));
   }
 
-  static keyString(row: any, prefix: string = ''): string {
-    return '${model.table}' + ${model.pkeys.map(k => `'_' + (prefix ? row[prefix + '${k.name}'] : row.${k.name})`).join(' + ')}
-  }
-
   static load(row: any, model: any, prefix: string = '', cache: dao.Cache = null): any {
-    if (${model.pkeys.map(k => `row[prefix + ${JSON.stringify(k.name)}] == null`).join(' && ')}) return;
+    ${hasPkey ? `if (${model.pkeys.map(k => `row[prefix + ${JSON.stringify(k.name)}] == null`).join(' && ')}) return;
     if (cache && (model = cache[${model.name}.keyString(row, prefix)])) return model;
-    if (!model) model = {};
-    if (cache) cache[${model.name}.keyString(row, prefix)] = model;${loadFlag ? `
+    ` : ''}if (!model) model = {};${hasPkey ? `
+    if (cache) cache[${model.name}.keyString(row, prefix)] = model;` : ''}${loadFlag ? `
     model.${loadFlag} = true;` : ''}
 
 `
@@ -246,9 +261,11 @@ function clientModel(config: Config, model: ProcessModel): string {
 }${model._imports.length ? '\n' + model._imports.join(';\n') + '\n' : ''}${model.extraTypes && model.extraTypes.length ? '\n' + model.extraTypes.map(([n, t]) => `export type ${n} = ${t};`).join('\n') + '\n' : ''
 }export default class ${model.name} {\n`;
 
+  const hasPkey = model.pkeys.length > 0;
+
   const loadFlag = ((!model.flags.load && model.flags.load !== false) || model.flags.load) ? model.flags.load || '__loaded' : '';
-  const changeFlag = ((!model.flags.change && model.flags.change !== false) || model.flags.change) ? model.flags.change || '__changed' : '';
-  const removeFlag = ((!model.flags.remove && model.flags.remove !== false) || model.flags.remove) ? model.flags.remove || '__removed' : '';
+  const changeFlag = hasPkey && ((!model.flags.change && model.flags.change !== false) || model.flags.change) ? model.flags.change || '__changed' : '';
+  const removeFlag = hasPkey && ((!model.flags.remove && model.flags.remove !== false) || model.flags.remove) ? model.flags.remove || '__removed' : '';
 
   if (loadFlag) tpl += `  ${loadFlag}?: boolean;
 `;
