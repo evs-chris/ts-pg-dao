@@ -1,4 +1,5 @@
 import * as pg from 'pg';
+import * as fs from 'fs-extra';
 
 export interface Config {
   output: Output;
@@ -7,7 +8,7 @@ export interface Config {
 }
 
 export interface BuildConfig extends Config {
-  pgconfig: pg.ClientConfig;
+  pgconfig: BuilderConfig;
 }
 
 export interface MergedOutput {
@@ -256,7 +257,10 @@ export interface IncludeMapDef {
 }
 export type IncludeMap = IncludeMapDef & { '*'?: string[] };
 
-export function config(config: pg.ClientConfig, fn: (builder: Builder) => Promise<Config>): Promise<BuildConfig> {
+export const tableQuery = `select table_name as name, table_schema as schema from information_schema.tables where table_type = 'BASE TABLE' and table_schema not like 'pg_%' and table_schema <> 'information_schema' order by table_schema asc, table_name asc;`;
+export const columnQuery = `select cs.column_name as name, cs.is_nullable = 'YES' as nullable, (select keys.constraint_name from information_schema.key_column_usage keys join information_schema.table_constraints tc on keys.constraint_name = tc.constraint_name and keys.constraint_schema = tc.constraint_schema and tc.table_name = keys.table_name where keys.table_schema = cs.table_schema and keys.table_name = cs.table_name and keys.column_name = cs.column_name and tc.constraint_type = 'PRIMARY KEY') is not null as pkey, cs.udt_name as type, cs.column_default as default from information_schema.columns cs join information_schema.tables ts on ts.table_name = cs.table_name and ts.table_schema = cs.table_schema where ts.table_schema = $1 and ts.table_name = $2 order by cs.column_name asc;`;
+
+export function config(config: BuilderConfig, fn: (builder: Builder) => Promise<Config>): Promise<BuildConfig> {
   const builder = new PrivateBuilder(config);
 
   return (async () => {
@@ -334,11 +338,35 @@ export const Types: { [key: string]: TSType } = {
   _numeric: 'string[]',
 }
 
+export type BuilderConfig = pg.ClientConfig & SchemaConfig;
+export interface SchemaConfig {
+  schemaCacheFile?: string;
+  schemaInclude?: string[];
+  schemaExclude?: string[];
+  schemaFull?: boolean;
+}
+export interface TableSchema {
+  name: string;
+  schema: string;
+  columns: ColumnSchema[];
+}
+export interface ColumnSchema {
+  name: string;
+  nullable: boolean;
+  pkey: boolean;
+  type: string;
+  default: string;
+}
+export interface SchemaCache {
+  tables: TableSchema[];
+}
+
 export class Builder {
   protected _pool: pg.Pool;
-  protected _config: pg.ClientConfig;
+  protected _config: BuilderConfig;
+  protected _schemaCache?: SchemaCache;
 
-  constructor(config: pg.ClientConfig) {
+  constructor(config: BuilderConfig) {
     this._config = config;
   }
 
@@ -350,71 +378,84 @@ export class Builder {
   }
 
   async table(name: string, schema: string = 'public'): Promise<Table> {
-    const client = await this.connect();
-    try {
-      const columns: Column[] = (await client.query(`select a.attname as name, not a.attnotnull as nullable,
-        (select conkey from pg_catalog.pg_constraint where conrelid = a.attrelid and contype = $1) @> ARRAY[a.attnum] as pkey,
-        (select t.typname from pg_catalog.pg_type t where t.oid = a.atttypid) as "type", d.adsrc as default
-        from pg_catalog.pg_attribute a join pg_catalog.pg_class c on c.oid = a.attrelid
-        left join pg_catalog.pg_namespace n on n.oid = c.relnamespace
-        left join pg_catalog.pg_attrdef d on (a.attrelid, a.attnum) = (d.adrelid, d.adnum)
-        where c.relname = $3 and a.attnum >= 0
-        and (n.nspname = $2)
-        and a.attisdropped = false
-        order by a.attname asc;`, ['p', schema, name])).rows.map(r => {
-          const col: Column = {
-            name: r.name, nullable: r.nullable, pkey: r.pkey, pgtype: r.type, type: r.type[0] === '_' ? 'any[]' : 'any', elidable: false
-          }
-          if (~col.type.toLowerCase().indexOf('json')) col.json = true;
-          if (col.type[0] === '_') col.array = true;
-          if (r.default != null) col.pgdefault = r.default;
-          if (col.nullable || col.pgdefault) col.elidable = true;
-          col.type = Types[col.pgtype] || col.type;
+    let cols: ColumnSchema[];
 
-          if (col.pgdefault != null) {
-            switch (col.type) {
-              case 'string':
-                const str = /^E?'((?:\\'|[^'])*)'/.exec(col.pgdefault);
-                if (str) col.default = `'${str[1]}'`;
-                else {
-                  const num = /^\(?([-0-9\.]+)\)?/.exec(col.pgdefault);
-                  if (num) col.default = `'${num[1]}'`;
-                }
-                break;
-              
-              case 'Date':
-                if (!col.pgdefault.indexOf('now()::')) col.default = `new Date()`;
-                break;
-
-              case 'number':
-                const num = /^\(?([-0-9\.]+)\)?/.exec(col.pgdefault);
-                if (num) col.default = num[1];
-                break;
-
-              case 'any':
-                const obj = /^'([^']+)'::json/.exec(col.pgdefault);
-                if (obj) col.default = obj[1];
-                break;
-
-              case 'boolean':
-                const bool = /^(true|false)$/.exec(col.pgdefault);
-                if (bool) col.default = bool[1];
-                break;
-            }
-          }
-
-          return col;
-        });
-
-        return { name, columns };
-    } finally {
-      await client.release();
+    if (this._config.database) {
+      try {
+        const client = await this.connect();
+        try {
+          cols = (await client.query(columnQuery, [schema, name])).rows;
+        } finally {
+          await client.release();
+        }
+      } catch (e) {
+        console.error(`Failed to read "${schema}.${name}" schema`);
+      }
     }
+
+    if (!cols && this._config.schemaCacheFile) {
+      if (!this._schemaCache) {
+        console.log(`Reading schema from cache ${this._config.schemaCacheFile}`);
+        this._schemaCache = JSON.parse(await fs.readFile(this._config.schemaCacheFile, { encoding: 'utf8' }));
+      }
+      const table = this._schemaCache.tables.find(t => t.schema === schema && t.name === name);
+      if (!table) throw new Error(`"${schema}.${table}" not found in schema cache ${this._config.schemaCacheFile}`);
+      cols = table.columns;
+    }
+
+    if (!cols) throw new Error(`Could not load schema for "${schema}.${name}`);
+
+    const columns = cols.map((r: ColumnSchema) => {
+      const col: Column = {
+        name: r.name, nullable: r.nullable, pkey: r.pkey, pgtype: r.type, type: r.type[0] === '_' ? 'any[]' : 'any', elidable: false
+      }
+      if (~col.type.toLowerCase().indexOf('json')) col.json = true;
+      if (col.type[0] === '_') col.array = true;
+      if (r.default != null) col.pgdefault = r.default;
+      if (col.nullable || col.pgdefault) col.elidable = true;
+      col.type = Types[col.pgtype] || col.type;
+
+      if (col.pgdefault != null) {
+        switch (col.type) {
+          case 'string':
+            const str = /^E?'((?:\\'|[^'])*)'/.exec(col.pgdefault);
+            if (str) col.default = `'${str[1]}'`;
+            else {
+              const num = /^\(?([-0-9\.]+)\)?/.exec(col.pgdefault);
+              if (num) col.default = `'${num[1]}'`;
+            }
+            break;
+          
+          case 'Date':
+            if (!col.pgdefault.indexOf('now()::')) col.default = `new Date()`;
+            break;
+
+          case 'number':
+            const num = /^\(?([-0-9\.]+)\)?/.exec(col.pgdefault);
+            if (num) col.default = num[1];
+            break;
+
+          case 'any':
+            const obj = /^'([^']+)'::json/.exec(col.pgdefault);
+            if (obj) col.default = obj[1];
+            break;
+
+          case 'boolean':
+            const bool = /^(true|false)$/.exec(col.pgdefault);
+            if (bool) col.default = bool[1];
+            break;
+        }
+      }
+
+      return col;
+    });
+
+    return { name, columns };
   }
 }
 
 class PrivateBuilder extends Builder {
-  constructor(cfg: pg.ClientConfig) {
+  constructor(cfg: BuilderConfig) {
     super(cfg);
   }
 

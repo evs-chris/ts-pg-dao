@@ -1,7 +1,7 @@
 import * as fs from 'fs-extra';
 import * as ts from 'typescript';
 import * as path from 'path';
-import { BuildConfig, Config, Model, Column, Query, Output, MergedOutput, SplitOutput, IncludeMap, IncludeExtraDef, IncludeMapDef } from './main';
+import { BuildConfig, Config, Model, Column, Query, Output, MergedOutput, SplitOutput, IncludeMap, IncludeExtraDef, IncludeMapDef, SchemaCache, tableQuery, columnQuery } from './main';
 import * as requireCwd from 'import-cwd';
 import * as pg from 'pg';
 
@@ -38,7 +38,7 @@ type ProcessModel = Model & { extraTypes?: Array<[string, string]>, extraImports
 const modelImport = /^\s*import\b/;
 
 export async function write(config: BuildConfig): Promise<void> {
-  const { models, output } = config;
+  const { models } = config;
 
   let pathy: boolean = false;
   let serverPath: string;
@@ -55,9 +55,10 @@ export async function write(config: BuildConfig): Promise<void> {
   }
 
   let model: ProcessModel;
-  const client = await new pg.Client(config.pgconfig);
+  // if there is a database in the client config, use the database, otherwise it may just be cached schema
+  const client: false | pg.Client = !!config.pgconfig.database && await new pg.Client(config.pgconfig);
   try {
-    await client.connect();
+    client && await client.connect();
 
     for (let j = 0; j < models.length; j++) {
       model = models[j];
@@ -84,11 +85,13 @@ export async function write(config: BuildConfig): Promise<void> {
           }
         };
         
-        try {
-          await client.query(`PREPARE __pg_dao_check_stmt AS ${res.sql}; DEALLOCATE __pg_dao_check_stmt;`);
-        } catch (e) {
-          console.error(`Error processing query ${q.name} for ${model.table} - ${q.sql}\n\n${e.message}`);
-          throw e;
+        if (client) {
+          try {
+            await client.query(`PREPARE __pg_dao_check_stmt AS ${res.sql}; DEALLOCATE __pg_dao_check_stmt;`);
+          } catch (e) {
+            console.error(`Error processing query ${q.name} for ${model.table} - ${q.sql}\n\n${e.message}`);
+            throw e;
+          }
         }
       }
 
@@ -101,8 +104,28 @@ export async function write(config: BuildConfig): Promise<void> {
         await fs.writeFile(client, clientModel(config, model));
       }
     }
+
+    if (client && config.pgconfig.schemaCacheFile) {
+      const cache: SchemaCache = { tables: [] };
+      const cfg = config.pgconfig;
+      console.log(`\t - generating schema cache`);
+
+      try {
+        for (const tbl of (await client.query(tableQuery)).rows) {
+          if (cfg.schemaInclude && !cfg.schemaInclude.includes(tbl.name)) continue;
+          else if (cfg.schemaExclude && cfg.schemaExclude.includes(tbl.name)) continue;
+          else if (!models.find(m => m.table === tbl.name) && !cfg.schemaFull) continue;
+          else cache.tables.push({ name: tbl.name, schema: tbl.schema, columns: (await client.query(columnQuery, [tbl.schema, tbl.name])).rows });
+        }
+      } catch (e) {
+        console.error(`Error generating schema cache:`, e);
+      }
+
+      console.log(`\t - writing schema cache ${cfg.schemaCacheFile}`);
+      await fs.writeFile(cfg.schemaCacheFile, JSON.stringify(cache, null, ' '), { encoding: 'utf8' });
+    }
   } finally {
-    await client.end();
+    client && await client.end();
   }
 
   if (config.index) {
