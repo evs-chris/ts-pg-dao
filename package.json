@@ -1,6 +1,6 @@
 {
   "name": "@evs-chris/ts-pg-dao",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "main": "runtime/main.js",
   "typings": "runtime/main.d.ts",
   "description": "Generate TypeScript DAO classes for PostgreSQL tables using a typed config DSL",
@@ -22,7 +22,7 @@
     "pg": "^7",
     "typescript": "^2.7",
     "fs-extra": "^5",
-    "commander": "^2",
+    "commander": "^3",
     "import-cwd": "^2"
   },
   "devDependencies": {
