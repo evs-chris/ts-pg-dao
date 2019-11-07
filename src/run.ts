@@ -338,7 +338,7 @@ function updateMembers(model: Model, prefix: string): string {
   if (model.fields.find(f => f.optlock)) res += `\n${prefix}const lock = new Date();`;
   model.fields.forEach(f => {
     if (!f.pkey && !f.optlock) {
-      res += `\n${prefix}if (model.hasOwnProperty('${f.alias || f.name}')) { params.push(${colToParam(f)}); sets.push('${f.name} = $' + params.length); }`;
+      res += setParam(f, prefix, `sets.push('${f.name} = $' + params.length)`);
     }
   });
 
@@ -360,7 +360,7 @@ function insertMembers(model: Model, prefix: string): string {
   let res = `\n${prefix}const params = [];\n${prefix}const sets = [];\n${prefix}let sql = 'INSERT INTO ${model.table} ';`;
   for (const f of model.fields) {
     if (!f.optlock) {
-      res += `\n${prefix}if (model.hasOwnProperty('${f.alias || f.name}')) { params.push(${colToParam(f)}); sets.push('${f.name}'); }`;
+      res += setParam(f, prefix, `sets.push('${f.name}')`);
       if (!f.elidable) res += `\n${prefix}else throw new Error('Missing non-elidable field ${f.alias || f.name}');`;
     }
   }
@@ -372,6 +372,17 @@ function insertMembers(model: Model, prefix: string): string {
   res += ret.map(f => `\n${prefix}model.${f.alias || f.name} = res.${f.name};`).join('');
 
   return res;
+}
+
+function setParam(col: Column, prefix: string, set: string, model: string = 'model', params: string = 'params'): string {
+  let cond = `\n${prefix}if (${model}.hasOwnProperty('${col.alias || col.name}')) { `
+  if (col.pgtype !== 'char' && col.pgtype !== 'varchar' && col.pgtype !== 'bpchar' && col.pgtype !== 'text') {
+    cond += `\n${prefix}  if ((${model}['${col.alias || col.name}'] as any) === '') { ${params}.push(null); ${set}; }\n${prefix}  else { ${params}.push(${colToParam(col)}); ${set}; }\n${prefix}`;
+  } else {
+    cond += `${params}.push(${colToParam(col)}); ${set}; `;
+  }
+  cond += '}';
+  return cond;
 }
 
 const tableAliases = /@"?([a-zA-Z_]+[a-zA-Z0-9_]*)"?(?!\.)\s(?:(?!\s*(?:left|right|cross|inner|outer|on|where)\s)\s*(?:[aA][sS]\s)?\s*"?([a-zA-Z_]+[a-zA-Z0-9_]*)?"?)?/gi;
