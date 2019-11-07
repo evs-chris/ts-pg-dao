@@ -316,7 +316,7 @@ function modelProps(config: Config, model: Model, client: boolean = false): stri
   let col: Column;
   for (let c = 0; c < model.cols.length; c++) {
     col = model.cols[c];
-    tpl += `  ${col.alias || col.name}${col.nullable ? '?' : ''}: ${col.type}${col.default ? ` = ${col.default}` : ''};\n`;
+    tpl += `  ${col.alias || col.name}${col.nullable ? '?' : ''}: ${col.enum ? col.enum.map(v => `'${v}'`).join('|') : col.type}${col.default ? ` = ${col.default}` : ''};\n`;
   }
 
   if (Object.keys(model._extras).length > 0) {

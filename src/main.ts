@@ -261,6 +261,7 @@ export type IncludeMap = IncludeMapDef & { '*'?: string[] };
 export const tableQuery = `select table_name as name, table_schema as schema from information_schema.tables where table_type = 'BASE TABLE' and table_schema not like 'pg_%' and table_schema <> 'information_schema' order by table_schema asc, table_name asc;`;
 export const columnQuery = `select cs.column_name as name, cs.is_nullable = 'YES' as nullable, (select keys.constraint_name from information_schema.key_column_usage keys join information_schema.table_constraints tc on keys.constraint_name = tc.constraint_name and keys.constraint_schema = tc.constraint_schema and tc.table_name = keys.table_name where keys.table_schema = cs.table_schema and keys.table_name = cs.table_name and keys.column_name = cs.column_name and tc.constraint_type = 'PRIMARY KEY') is not null as pkey, cs.udt_name as type, cs.column_default as default from information_schema.columns cs join information_schema.tables ts on ts.table_name = cs.table_name and ts.table_schema = cs.table_schema where ts.table_schema = $1 and ts.table_name = $2 order by cs.column_name asc;`;
 export const commentQuery =  `select shobj_description((select oid from pg_database where datname = $1), 'pg_database') as comment;`;
+export const enumQuery = (type: string) => `select enum_range(null::${type})::varchar[] as values;`;
 
 export function config(config: BuilderConfig, fn: (builder: Builder) => Promise<Config>): Promise<BuildConfig> {
   const builder = new PrivateBuilder(config);
@@ -300,6 +301,7 @@ export interface Column {
   cast?: string;
   json?: true;
   optlock?: boolean;
+  enum?: string[];
 }
 
 export type TSType = 'Date' | 'number' | 'string' | 'any' | 'boolean' | 'Date[]' | 'number[]' | 'string[]' | 'any[]' | 'boolean[]' | 'any' | 'any[]';
@@ -358,6 +360,7 @@ export interface ColumnSchema {
   pkey: boolean;
   type: string;
   default: string;
+  enum?: string[];
 }
 export interface SchemaCache {
   tables: TableSchema[];
@@ -387,6 +390,13 @@ export class Builder {
         const client = await this.connect();
         try {
           cols = (await client.query(columnQuery, [schema, name])).rows;
+          for (const col of cols) {
+            if (!Types[col.type]) { // check for enums
+              try {
+                col.enum = (await client.query(enumQuery(col.type))).rows[0].values;
+              } catch {}
+            }
+          }
         } finally {
           await client.release();
         }
@@ -416,6 +426,11 @@ export class Builder {
       if (r.default != null) col.pgdefault = r.default;
       if (col.nullable || col.pgdefault) col.elidable = true;
       col.type = Types[col.pgtype] || col.type;
+
+      if (r.enum) {
+        col.enum = r.enum;
+        col.type = 'string';
+      }
 
       if (col.pgdefault != null) {
         switch (col.type) {
