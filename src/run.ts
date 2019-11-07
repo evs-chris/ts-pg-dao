@@ -367,7 +367,7 @@ function insertMembers(model: Model, prefix: string): string {
 
   const ret = model.fields.filter(f => f.pkey || f.optlock || (f.elidable && f.pgdefault));
   const locks = model.fields.filter(f => f.optlock);
-  res += `\n${prefix}sql += \`(\${sets.join(', ')}\${${locks.length} && sets.length ? ', ' : ''}${locks.map(l => l.name).join(', ')}) VALUES (\${sets.map((n, i) => \`$\${i + 1}\`)}\${${locks.length} && sets.length ? ', ' : ''}${locks.map(l => 'now()').join(', ')}) RETURNING ${ret.map(f => f.name).join(', ')};\`;`;
+  res += `\n${prefix}sql += \`(\${sets.join(', ')}\${${locks.length} && sets.length ? ', ' : ''}${locks.map(l => l.name).join(', ')}) VALUES (\${sets.map((n, i) => \`$\${i + 1}\`)}\${${locks.length} && sets.length ? ', ' : ''}${locks.map(l => 'now()').join(', ')})${ret.length ? `RETURNING ${ret.map(f => f.name).join(', ')}` : ''};\`;`;
   res += `\n\n${prefix}const res = (await con.query(sql, params)).rows[0];`
   res += ret.map(f => `\n${prefix}model.${f.alias || f.name} = res.${f.name};`).join('');
 
