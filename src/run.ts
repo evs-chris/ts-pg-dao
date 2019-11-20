@@ -525,14 +525,18 @@ function processQuery(config: Config, start: Query): ProcessQueryResult {
   const defaulted = (query.params || []).reduce((a, c) => a && (c.optional || !!c.default), true);
 
   query.parts && Object.entries(query.parts).forEach(([condition, sql]) => {
-    const parms: Param[] = [];
-    const [str, check] = mapParams(mapFields(sql), parms, 'ps.length');
-    const code = `if (${defaulted ? '' : 'params && '}${condition.replace(params, (str, name) => `params.${name}`)}) {
-      sql += \`${JSON.stringify(str).slice(1, -1)}\`;${parms.length > 0 ? `
-      ` : ''}${parms.map(p => `ps.push(${!defaulted ? 'params && ' : ''}'${p.name}' in params ? params.${p.name} : ${p.default});`).join('\n      ')}
+    const ps: Param[] = [];
+    const [str, check] = mapParams(mapFields(sql), ps, 'ps.length');
+    const cond = condition.replace(params, (str, name) => {
+      if (!start.params.find(p => p.name === name)) throw new Error(`Query ${query.owner.name}.${query.name} has an invalid part condition referencing unknown parameter $${name}.`);
+      return `params.${name}`;
+    });
+    const code = `if (${defaulted ? '' : 'params && '}${cond}) {
+      sql += \`${JSON.stringify(str).slice(1, -1)}\`;${ps.length > 0 ? `
+      ` : ''}${ps.map(p => `ps.push(${!defaulted ? 'params && ' : ''}'${p.name}' in params ? params.${p.name} : ${p.default});`).join('\n      ')}
     }`
     parts.push({
-      code, params: parms, check,
+      code, params: ps, check,
     });
   });
 
