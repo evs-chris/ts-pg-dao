@@ -527,7 +527,7 @@ function processQuery(config: Config, start: Query): ProcessQueryResult {
   query.parts && Object.entries(query.parts).forEach(([condition, sql]) => {
     const parms: Param[] = [];
     const [str, check] = mapParams(mapFields(sql), parms, 'ps.length');
-    const code = `if (${condition.replace(params, (str, name) => `params.${name}`)}) {
+    const code = `if (${defaulted ? '' : 'params && '}${condition.replace(params, (str, name) => `params.${name}`)}) {
       sql += \`${JSON.stringify(str).slice(1, -1)}\`;${parms.length > 0 ? `
       ` : ''}${parms.map(p => `ps.push(${!defaulted ? 'params && ' : ''}'${p.name}' in params ? params.${p.name} : ${p.default});`).join('\n      ')}
     }`
