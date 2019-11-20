@@ -1,7 +1,7 @@
 import * as fs from 'fs-extra';
 import * as ts from 'typescript';
 import * as path from 'path';
-import { BuildConfig, Config, Model, Column, Query, Output, MergedOutput, SplitOutput, IncludeMap, IncludeExtraDef, IncludeMapDef, SchemaCache, tableQuery, columnQuery } from './main';
+import { BuildConfig, Config, Model, Column, Query, Param, Output, MergedOutput, IncludeMap, IncludeExtraDef, SchemaCache, tableQuery, columnQuery } from './main';
 import * as requireCwd from 'import-cwd';
 import * as pg from 'pg';
 
@@ -86,10 +86,15 @@ export async function write(config: BuildConfig): Promise<void> {
         };
         
         if (client) {
+          const sql = combineParts(res.sql, res.params, res.parts);
+          let part: string;
           try {
-            await client.query(`PREPARE __pg_dao_check_stmt AS ${res.sql}; DEALLOCATE __pg_dao_check_stmt;`);
+            for (const s of sql) {
+              part = s;
+              await client.query(`PREPARE __pg_dao_check_stmt AS ${s}; DEALLOCATE __pg_dao_check_stmt;`);
+            }
           } catch (e) {
-            console.error(`Error processing query ${q.name} for ${model.table} - ${q.sql}\n\n${e.message}`);
+            console.error(`Error processing query ${q.name} for ${model.table} - ${q.sql}\n---part--\n${part}\n\n${e.message}`);
             throw e;
           }
         }
@@ -412,25 +417,60 @@ interface ProcessQueryResult {
   others: string[];
   interface?: [string, string];
   sql: string;
+  params: number;
+  parts: QueryPartCheck[];
 }
+
+interface QueryPart {
+  code: string;
+  params: Param[];
+  check: QueryPartCheck;
+}
+
+type QueryPartCheck = (params: number) => [string, number];
+
 function processQuery(config: Config, start: Query): ProcessQueryResult {
   const query = start as ProcessQuery;
-  const parms = [];
+  const parms: Param[] = [];
   const aliases: AliasMap = query.aliases = {};
+  const parts: QueryPart[] = [];
   let root: Alias;
 
   if (start.scalar && !start.owner.cols.find(c => c.name === start.scalar)) throw new Error(`Scalar query ${query.owner.name}.${query.name} must return a field from ${query.owner.table}.`);
 
-  let sql = query.sql.replace(params, (str, name) => {
-    let p, i;
-    if (!query.params || !(p = query.params.find(p => p.name === name))) throw new Error(`Query ${query.owner.name}.${query.name} references parameter ${name} that is not defined.`);
-    if (~(i = parms.indexOf(p))) return `$${i + 1}`;
-    else {
-      const rep = `$${parms.length + 1}`;
-      parms.push(p);
-      return rep;
+  // process params
+  function mapParams(sql: string, ps: Param[], offset?: string): [string, QueryPartCheck] {
+    let fn: QueryPartCheck = null;
+
+    const str = sql.replace(params, (str, name) => {
+      let p, i;
+      if (!query.params || !(p = query.params.find(p => p.name === name))) throw new Error(`Query ${query.owner.name}.${query.name} references parameter ${name} that is not defined.`);
+      if (~(i = parms.indexOf(p))) return `$${i + 1}`;
+      else if (~(i = ps.indexOf(p))) return offset ? `$\${${offset} + ${i + 1}}` : `$${i + 1}`;
+      else {
+        ps.push(p);
+        return offset ? `$\${${offset} + ${ps.length}}` : `$${ps.length}`;
+      }
+    });
+
+    if (offset) {
+      fn = num => {
+        let len = num;
+        const s = sql.replace(params, (str, name) => {
+          let i: number;
+          const p = query.params.find(p => p.name === name);
+          if (~(i = parms.indexOf(p))) return `$${i + 1}`;
+          else if (~(i = ps.indexOf(p))) return `$${len + i + 1}`;
+          else return `$${++len}`;
+        });
+        return [s, len];
+      };
     }
-  });
+
+    return [str, fn];
+  }
+
+  let sql = mapParams(query.sql, parms)[0];
 
   // map tables to models and record relevant aliases
   sql = sql.replace(tableAliases, (m ,tbl, alias) => {
@@ -456,29 +496,45 @@ function processQuery(config: Config, start: Query): ProcessQueryResult {
   buildTypes(query, root);
 
   // map and expand column aliases as necessary
-  sql = sql.replace(fieldAliases, (m, alias, col) => {
-    let entry = aliases[alias];
-    let mdl: Model;
-    if (entry) mdl = entry.model;
-    else {
-      throw new Error(`Query ${query.owner.name}.${query.name} requires an entry for ${alias} before its use in column ref ${alias}.${col}.`);
-    }
-
-    if (col === '*') {
-      return (entry.cols || entry.model.cols).map(c => `${alias}.${c.name} AS ${entry.prefix}${c.name}`).join(', ');
-    } else {
-      const c = mdl.fields.find(f => col === f.name);
-      if (!c) throw new Error(`Could not find field for ${alias}.${col} referenced in query ${query.name}.`);
-
-      if (~m.indexOf(':')) {
-        return `${entry.prefix}${c.name}`;
-      } else {
-        return `${alias}.${c.name} AS ${entry.prefix}${c.name}`;
+  function mapFields(sql: string): string {
+    return sql.replace(fieldAliases, (m, alias, col) => {
+      let entry = aliases[alias];
+      let mdl: Model;
+      if (entry) mdl = entry.model;
+      else {
+        throw new Error(`Query ${query.owner.name}.${query.name} requires an entry for ${alias} before its use in column ref ${alias}.${col}.`);
       }
-    }
-  });
 
-  const defaulted = parms.reduce((a, c) => a && c.default, true);
+      if (col === '*') {
+        return (entry.cols || entry.model.cols).map(c => `${alias}.${c.name} AS ${entry.prefix}${c.name}`).join(', ');
+      } else {
+        const c = mdl.fields.find(f => col === f.name);
+        if (!c) throw new Error(`Could not find field for ${alias}.${col} referenced in query ${query.name}.`);
+
+        if (~m.indexOf(':')) {
+          return `${entry.prefix}${c.name}`;
+        } else {
+          return `${alias}.${c.name} AS ${entry.prefix}${c.name}`;
+        }
+      }
+    });
+  }
+
+  sql = mapFields(sql);
+
+  const defaulted = (query.params || []).reduce((a, c) => a && (c.optional || !!c.default), true);
+
+  query.parts && Object.entries(query.parts).forEach(([condition, sql]) => {
+    const parms: Param[] = [];
+    const [str, check] = mapParams(mapFields(sql), parms, 'ps.length');
+    const code = `if (${condition.replace(params, (str, name) => `params.${name}`)}) {
+      sql += \`${JSON.stringify(str).slice(1, -1)}\`;${parms.length > 0 ? `
+      ` : ''}${parms.map(p => `ps.push(${!defaulted ? 'params && ' : ''}'${p.name}' in params ? params.${p.name} : ${p.default});`).join('\n      ')}
+    }`
+    parts.push({
+      code, params: parms, check,
+    });
+  });
 
   const loader = buildLoader(query);
 
@@ -496,16 +552,25 @@ function processQuery(config: Config, start: Query): ProcessQueryResult {
     if (!others.includes(i)) others.push(i);
   }
 
+  function getParamsValues(parms: Param[]) {
+    return parms.map(p => p.default ?
+      `${!defaulted ? 'params && ' : ''}'${p.name}' in params ? params.${p.name} : ${p.default}` :
+      `params[${JSON.stringify(p.name)}]`).join(', ')
+  }
+
   const res: ProcessQueryResult = {
-    method: `  static async ${query.name}(con: dao.Connection, params: { ${parms.map(p => `${p.name}${p.default ? '?' : ''}: ${p.type || 'string'}`).join(', ')} }${defaulted ? ' = {}' : ''}): Promise<${query.result ? query.result : query.scalar ? loader.interface : query.owner.name}${query.singular ? '' : '[]'}> {
-    const query = await con.query(__${query.name}_sql, [${parms.map(p => p.default ?
-      `${defaulted ? 'params && ' : ''}${JSON.stringify(p.name)} in params ? params[${JSON.stringify(p.name)}] : ${p.default}` :
-      `params[${JSON.stringify(p.name)}]`).join(', ')}]);
+    method: `  static async ${query.name}(con: dao.Connection, params: { ${(query.params || []).map(p => `${p.name}${p.optional || p.default ? '?' : ''}: ${p.type || 'string'}`).join(', ')} }${defaulted ? ' = {}' : ''}): Promise<${query.result ? query.result : query.scalar ? loader.interface : query.owner.name}${query.singular ? '' : '[]'}> {
+    let sql = __${query.name}_sql;
+    const ps: any[] = [${getParamsValues(parms)}];
+    ${parts.map((p, i) => p.code).join('\n    ')}
+    const query = await con.query(sql, ps);
     ${loader.loader}
   }`,
     outer,
     others,
-    sql
+    sql,
+    parts: parts.map(p => p.check),
+    params: parms.length,
   };
   if (query.result) res.interface = [query.result, loader.interface];
 
@@ -628,4 +693,17 @@ function reindent(fn: string, prefix: string): string {
   const lines = fn.split('\n');
   const indent = lines[lines.length - 1].replace(/^(\s*).*/, '$1');
   return fn.replace(new RegExp(`^${indent}`, 'gm'), prefix);
-} 
+}
+
+function combineParts(sql: string, params: number, parts: QueryPartCheck[]): string[] {
+  const res: string[] = [sql];
+  for (let i = 0; i < parts.length; i++) {
+    let num = params;
+    res.push(sql + parts.filter((p, j) => (i + 1) & (j + 1)).map(p => {
+      const [sql, count] = p(num);
+      num += count;
+      return sql;
+    }).join(''));
+  }
+  return res;
+}

@@ -202,6 +202,7 @@ export interface QueryOptions {
   scalar?: string;
   extras?: OptionalExtras;
   imports?: string[];
+  parts?: { [condition: string]: string };
 }
 
 export class Query {
@@ -216,6 +217,7 @@ export class Query {
   scalar?: string;
   extras?: OptionalExtras;
   imports?: string[];
+  parts?: { [condition: string]: string };
 
   constructor(owner: Model, options: QueryOptions) {
     this.owner = owner;
@@ -229,6 +231,7 @@ export class Query {
     this.scalar = options.scalar;
     this.extras = options.extras;
     this.imports = options.imports;
+    this.parts = options.parts;
   }
 }
 
@@ -236,16 +239,21 @@ export type ParamType = 'string' | 'number' | 'string[]' | 'number[]' | 'boolean
 export class Param {
   name: string;
   type: ParamType;
-  default: string;
+  default?: string;
+  optional: boolean = false;
 
-  constructor(name: string, type: ParamType = 'string', def?: string) {
+  constructor(name: string, type: ParamType = 'string', def?: string, optional?: boolean) {
     this.name = name;
     this.type = type;
     this.default = def;
+    if (optional !== undefined) this.optional = optional;
   }
 }
 export function param(name: string, type: ParamType = 'string', def?: string) {
   return new Param(name, type, def);
+}
+export function opt(name: string, type: ParamType = 'string', def?: string) {
+  return new Param(name, type, def, true);
 }
 
 export interface IncludeExtraDef {
