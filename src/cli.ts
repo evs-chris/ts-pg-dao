@@ -231,6 +231,6 @@ commands.push(cli.command('help [command]')
 cli.parse(process.argv);
 
 process.on('unhandledRejection', err => {
-  console.error(err.message);
+  console.error(err);
   process.exit(1);
 });

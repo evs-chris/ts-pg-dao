@@ -3,17 +3,13 @@
     "target": "es2017",
     "module": "commonjs",
     "moduleResolution": "node",
-    "jsx": "react",
-    "experimentalDecorators": true,
-    "emitDecoratorMetadata": true,
     "declaration": true,
     "noImplicitAny": false,
     "suppressImplicitAnyIndexErrors": false,
     "strictNullChecks": false,
     "outDir": "runtime",
     "lib": [
-      "dom",
-      "es2017"
+      "es2018"
     ]
   },
   "compileOnSave": true,

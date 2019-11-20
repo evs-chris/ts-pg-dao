@@ -27,7 +27,8 @@
   "devDependencies": {
     "@types/fs-extra": "^5",
     "@types/pg": "^7",
-    "typescript": ">= 2.7"
+    "@types/node": "^12",
+    "typescript": "3.7"
   },
   "peerDependencies": {
     "typescript": ">= 2.7"
