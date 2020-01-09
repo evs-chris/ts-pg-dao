@@ -54,6 +54,12 @@ export interface CodeMap {
 export type CodeLocation = 'inner'|'outer';
 export type CodeType = 'client'|'server'|'both';
 
+export type ExportMap = {
+  client?: string[];
+  server?: string[];
+  both?: string[]
+}
+
 export class Model {
   constructor(table: string, fields: Column[], opts: ModelOpts = {}) {
     this.name = opts.name || table;
@@ -80,6 +86,8 @@ export class Model {
   _imports: string[] = [];
 
   _extras: OptionalExtras = {};
+
+  _exports: ExportMap = {};
 
   codeMap: CodeMap = {};
 
@@ -134,8 +142,31 @@ export class Model {
     return this;
   }
 
-  code(code: string, type: CodeType = 'both', location: CodeLocation = 'inner'): Model {
+  code(code: string, exports?: string[], type?: CodeType, location?: CodeLocation): Model;
+  code(code: string, exports?: string[], location?: CodeLocation, type?: CodeType): Model;
+  code(code: string, type?: CodeType, location?: CodeLocation, exports?: string[]): Model;
+  code(code: string, type?: CodeType, exports?: string[], location?: CodeLocation): Model;
+  code(code: string, location?: CodeLocation, exports?: string[], type?: CodeType): Model;
+  code(code: string, location?: CodeLocation, type?: CodeType, exports?: string[]): Model;
+  code(code: string, arg1?: CodeType|CodeLocation|string[], arg2?: CodeType|CodeLocation|string[], arg3?: CodeType|CodeLocation|string[]): Model {
+    let type: CodeType = 'both';
+    let location: CodeLocation = 'inner';
+    let exports: string[];
+
+    [arg1, arg2, arg3].forEach(arg => {
+      if (Array.isArray(arg)) exports = arg;
+      else if (arg === 'inner' || arg === 'outer') location = arg;
+      else if (typeof arg === 'string') type = arg;
+    });
+
     this.codeMap[`${type}${location[0].toUpperCase()}${location.substr(1)}`] = code;
+    if (exports) exports.forEach(e => this.exports(e, type));
+    return this;
+  }
+
+  exports(name: string, type: CodeType = 'both'): Model {
+    if (!this._exports[type]) this._exports[type] = [];
+    this._exports[type].push(name);
     return this;
   }
 

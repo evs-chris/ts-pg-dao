@@ -134,11 +134,24 @@ export async function write(config: BuildConfig): Promise<void> {
   }
 
   if (config.index) {
-    const tpl = models.map((m: ProcessModel) => `export { default as ${m.name}${m.extraTypes.length ? `, ${m.extraTypes.map(t => t[0]).join(', ')}` : ''} } from './${m.file || m.name}';`).join('\n');
+    const tpl = models.map((m: ProcessModel) => {
+      const exports: string[] = [];
+      if (m.extraTypes && m.extraTypes.length) exports.push(...m.extraTypes.map(t => t[0]));
+      if (m._exports.server) exports.push(...m._exports.server);
+      if (m._exports.both) exports.push(...m._exports.both);
+      return `export { default as ${m.name}${exports.length ? `, ${exports.join(', ')}` : ''} } from './${m.file || m.name}';`;
+    }).join('\n');
     const server = path.join(serverPath, typeof config.index === 'string' ? config.index : 'index.ts');
     console.log(`\twriting server index to ${server}...`);
     await fs.writeFile(server, tpl);
     if (!pathy) {
+      const tpl = models.map((m: ProcessModel) => {
+        const exports: string[] = [];
+        if (m.extraTypes && m.extraTypes.length) exports.push(...m.extraTypes.map(t => t[0]));
+        if (m._exports.client) exports.push(...m._exports.client);
+        if (m._exports.both) exports.push(...m._exports.both);
+        return `export { default as ${m.name}${exports.length ? `, ${exports.join(', ')}` : ''} } from './${m.file || m.name}';`;
+      }).join('\n');
       const client = path.join(clientPath, typeof config.index === 'string' ? config.index : 'index.ts');
       console.log(`\twriting client index to ${client}...`);
       await fs.writeFile(client, tpl);
