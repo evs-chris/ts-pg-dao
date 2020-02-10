@@ -363,20 +363,20 @@ function updateMembers(model: Model, prefix: string): string {
   if (model.fields.find(f => f.optlock)) res += `\n${prefix}const lock = new Date();`;
   model.fields.forEach(f => {
     if (!f.pkey && !f.optlock) {
-      res += setParam(f, prefix, `sets.push('${f.name} = $' + params.length)`);
+      res += setParam(f, prefix, `sets.push('"${f.name}" = $' + params.length)`);
     }
   });
 
   const locks = model.fields.filter(f => f.optlock);
 
   if (locks.length) {
-    res += `\n${locks.map(l => `${prefix}params.push(lock);\n${prefix}sets.push('${l.name} = $' + params.length);`).join('\n')}`;
+    res += `\n${locks.map(l => `${prefix}params.push(lock);\n${prefix}sets.push('"${l.name}" = $' + params.length);`).join('\n')}`;
   }
   res += `\n\n${prefix}sql += sets.join(', ');\n`;
   res += `\n${prefix}const count = params.length;`;
   const where = model.fields.filter(f => f.pkey || f.optlock);
   res += `\n${prefix}params.push(${where.map(f => `model.${f.alias || f.name}`).join(', ')});`;
-  res += `\n${prefix}sql += \` WHERE ${where.map((f, i) => `${f.optlock ? `date_trunc('millisecond', ${f.name})` : f.name} = $\${count + ${i + 1}}`).join(' AND ')}\`;`
+  res += `\n${prefix}sql += \` WHERE ${where.map((f, i) => `${f.optlock ? `date_trunc('millisecond', "${f.name}")` : `"${f.name}"`} = $\${count + ${i + 1}}`).join(' AND ')}\`;`
 
   return res;
 }
@@ -392,7 +392,7 @@ function insertMembers(model: Model, prefix: string): string {
 
   const ret = model.fields.filter(f => f.pkey || f.optlock || (f.elidable && f.pgdefault));
   const locks = model.fields.filter(f => f.optlock);
-  res += `\n${prefix}sql += \`(\${sets.join(', ')}\${${locks.length} && sets.length ? ', ' : ''}${locks.map(l => l.name).join(', ')}) VALUES (\${sets.map((n, i) => \`$\${i + 1}\`)}\${${locks.length} && sets.length ? ', ' : ''}${locks.map(l => 'now()').join(', ')})${ret.length ? `RETURNING ${ret.map(f => f.name).join(', ')}` : ''};\`;`;
+  res += `\n${prefix}sql += \`(\${sets.map(s => \`"\${s}"\`).join(', ')}\${${locks.length} && sets.length ? ', ' : ''}${locks.map(l => l.name).join(', ')}) VALUES (\${sets.map((n, i) => \`$\${i + 1}\`)}\${${locks.length} && sets.length ? ', ' : ''}${locks.map(l => 'now()').join(', ')})${ret.length ? ` RETURNING ${ret.map(f => `"${f.name}"`).join(', ')}` : ''};\`;`;
   res += `\n\n${prefix}const res = (await con.query(sql, params)).rows[0];`
   res += ret.map(f => `\n${prefix}model.${f.alias || f.name} = res.${f.name};`).join('');
 
