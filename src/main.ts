@@ -405,6 +405,10 @@ export interface SchemaCache {
   tables: TableSchema[];
 }
 
+export const BuilderOptions = {
+  forceCache: false,
+};
+
 export class Builder {
   protected _pool: pg.Pool;
   protected _config: BuilderConfig;
@@ -424,7 +428,7 @@ export class Builder {
   async table(name: string, schema: string = 'public'): Promise<Table> {
     let cols: ColumnSchema[];
 
-    if (this._config.database) {
+    if (this._config.database && !BuilderOptions.forceCache) {
       try {
         const client = await this.connect();
         try {

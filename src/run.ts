@@ -1,11 +1,15 @@
 import * as fs from 'fs-extra';
 import * as ts from 'typescript';
 import * as path from 'path';
-import { BuildConfig, Config, Model, Column, Query, Param, Output, MergedOutput, IncludeMap, IncludeExtraDef, SchemaCache, tableQuery, columnQuery } from './main';
+import { BuildConfig, BuilderOptions, Config, Model, Column, Query, Param, Output, MergedOutput, IncludeMap, IncludeExtraDef, SchemaCache, tableQuery, columnQuery } from './main';
 import * as requireCwd from 'import-cwd';
 import * as pg from 'pg';
 
-export async function config(file): Promise<BuildConfig|BuildConfig[]> {
+export interface ConfigOpts {
+  forceCache?: boolean;
+}
+
+export async function config(file, opts: ConfigOpts = {}): Promise<BuildConfig|BuildConfig[]> {
   const input = await fs.readFile(file, { encoding: 'utf8' });
   const output = ts.transpileModule(input, {
     compilerOptions: {
@@ -20,7 +24,10 @@ export async function config(file): Promise<BuildConfig|BuildConfig[]> {
     default?: any
   }
   const config: ConfigModule = {};
+  const fc = BuilderOptions.forceCache;
+  if (opts.forceCache) BuilderOptions.forceCache = true;
   (new Function('exports', 'require', '__filename', '__dirname', output.outputText))(config, requireCwd, path.resolve(file), path.dirname(path.resolve(file)));
+  BuilderOptions.forceCache = fc;
 
   if (typeof config.default !== 'object' || typeof config.default.then !== 'function') {
     throw new Error('Config file should export a default Promise<BuildConfig|BuildConfig[]>.');
