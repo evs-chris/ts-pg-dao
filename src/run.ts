@@ -231,7 +231,7 @@ export default class ${model.name} {
     if (transact) await con.begin();
     try {
       const params = [${model.fields.filter(f => f.pkey || f.optlock).map(f => `model.${f.name}`).join(', ')}];
-      const res = await con.query('delete from "${model.table}" where ${model.fields.filter(f => f.pkey || f.optlock).map((f, i) => `"${f.name}" = $${i + 1}`).join(' AND ')}', params);
+      const res = await con.query(\`delete from "${model.table}" where ${model.fields.filter(f => f.pkey || f.optlock).map((f, i) => `${f.optlock ? `date_trunc('millisecond', "${f.name}")` : `"${f.name}"`} = $${i + 1}`).join(' AND ')}\`, params);
       if (res.rowCount < 1) throw new Error('No matching row to delete for ${model.name}');
       if (res.rowCount > 1) throw new Error('Too many matching rows deleted for ${model.name}');
     } catch (e) {
