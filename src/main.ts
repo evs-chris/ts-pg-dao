@@ -220,6 +220,11 @@ export class Field {
     this.field.pkey = b;
     return this;
   }
+
+  retype(type: string): Field {
+    this.field.retype = type;
+    return this;
+  }
 }
 
 export interface QueryOptions {
@@ -336,6 +341,7 @@ export interface Column {
   pkey: boolean;
   pgtype: string;
   type: TSType;
+  retype?: string;
   array?: boolean;
   cast?: string;
   json?: true;

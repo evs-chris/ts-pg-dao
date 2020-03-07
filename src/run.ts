@@ -240,7 +240,7 @@ export default class ${model.name} {
     }
   }
   
-  ${model.queries.find(q => q.name === 'findById') ? '' : `static async findById(con: dao.Connection, ${model.pkeys.map(k => `${k.alias || k.name}: ${k.type}`).join(', ')}, optional: boolean = false): Promise<${model.name}> {
+  ${model.queries.find(q => q.name === 'findById') ? '' : `static async findById(con: dao.Connection, ${model.pkeys.map(k => `${k.alias || k.name}: ${k.retype || k.type}`).join(', ')}, optional: boolean = false): Promise<${model.name}> {
     return await ${model.name}.findOne(con, '${model.pkeys.map((k, i) => `${k.name} = $${i + 1}`).join(' AND ')}', [${model.pkeys.map(k => k.alias || k.name).join(', ')}], optional)
   }
 
@@ -341,7 +341,7 @@ function modelProps(config: Config, model: Model, client: boolean = false): stri
   let col: Column;
   for (let c = 0; c < model.cols.length; c++) {
     col = model.cols[c];
-    tpl += `  ${col.alias || col.name}${col.nullable ? '?' : ''}: ${col.enum ? col.enum.map(v => `'${v}'`).join('|') : col.type}${col.default ? ` = ${col.default}` : ''};\n`;
+    tpl += `  ${col.alias || col.name}${col.nullable ? '?' : ''}: ${col.enum ? col.enum.map(v => `'${v}'`).join('|') : (col.retype || col.type)}${col.default ? ` = ${col.default}` : ''};\n`;
   }
 
   if (Object.keys(model._extras).length > 0) {
@@ -637,7 +637,7 @@ function buildTypes(query: ProcessQuery, alias: Alias, level: number = 0): void 
   if (alias.type) return;
   let t = '', b = '';
   if (!alias.cols) t = alias.model.name;
-  else b = `${alias.cols.map(c => `${c.alias || c.name}: ${c.type}`).join(', ')}`;
+  else b = `${alias.cols.map(c => `${c.alias || c.name}: ${c.retype || c.type}`).join(', ')}`;
 
   if (alias.extra) b += `${b.length ? ', ' : ''}${alias.extra.map(e => `${e.name}: ${e.type}`).join(', ')}`;
 
@@ -678,7 +678,8 @@ function buildLoader(query: ProcessQuery): { loader: string, interface: string }
     return res;`;
   }
 
-  return { loader: tpl, interface: query.scalar ? query.owner.cols.find(c => c.name === query.scalar).type : query.root.type };
+  const scalar = query.scalar && query.owner.cols.find(c => c.name === query.scalar);
+  return { loader: tpl, interface: query.scalar ? (scalar.retype || scalar.type) : query.root.type };
 }
 
 interface Depth { n: number };
