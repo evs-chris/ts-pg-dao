@@ -26,7 +26,7 @@ export interface ModelOpts {
   file?: string;
 }
 
-export type Hook = (any) => void;
+export type Hook = (model: any) => void;
 export interface Hooks {
   beforesave?: Hook;
   beforedelete?: Hook;

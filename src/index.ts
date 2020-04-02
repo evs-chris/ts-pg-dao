@@ -6,7 +6,7 @@ export interface Connection extends pg.Client {
   commit(): Promise<void>;
   inTransaction: boolean;
   transact<T>(cb: (con: Connection) => Promise<T>): Promise<T>;
-  sql(string: TemplateStringsArray, ...parts: any[]): Promise<pg.QueryResult>;
+  sql<T = any>(string: TemplateStringsArray, ...parts: any[]): Promise<pg.QueryResult & { rows: T[] }>;
   lit(sql: string): SQL;
 }
 
