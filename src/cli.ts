@@ -28,14 +28,18 @@ cli
 
 commands.push(cli.command('build')
   .description('Build a DAO with the given config file')
-  .option('-n, --skip-cache', 'Do not cache the target schema')
+  .option('-s, --skip-cache', 'Do not cache the target schema')
+  .option('-n, --from-cache', 'Do not connect to an databases')
+  .option('-o, --only <list>', 'Only run for the named configuration(s)', str => str.split(','))
   .action(async cmd => {
     const file = cli.config || await findConfig(path.resolve('.'));
     const res = await config(file);
     const configs: BuildConfig[] = Array.isArray(res) ? res : [res];
 
     for (const config of configs) {
-      if (cmd.skipCache) delete config.pgconfig.schemaCacheFile;
+      if (cmd.only && !cmd.only.includes(config.name)) continue;
+      if (cmd.fromCache) delete config.pgconfig.database;
+      else if (cmd.skipCache) delete config.pgconfig.schemaCacheFile;
       await write(config);
     }
   }));
