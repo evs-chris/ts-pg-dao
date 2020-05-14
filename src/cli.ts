@@ -4,8 +4,8 @@ import * as path from 'path';
 import * as rl from 'readline';
 import * as fs from 'fs-extra';
 import * as pg from 'pg';
-import { config, write } from './run';
-import { BuildConfig, tableQuery, columnQuery, commentQuery, SchemaCache } from './main';
+import { config, write, ConfigOpts } from './run';
+import { BuildConfig, tableQuery, columnQuery, commentQuery, enumQuery, SchemaCache, Types } from './main';
 
 const pkg = require(path.join(__dirname, '../package.json'));
 
@@ -33,14 +33,16 @@ commands.push(cli.command('build')
   .option('-o, --only <list>', 'Only run for the named configuration(s)', str => str.split(','))
   .action(async cmd => {
     const file = cli.config || await findConfig(path.resolve('.'));
+    const opts: ConfigOpts = {};
+    if (cmd.fromCache) opts.forceCache = true;
     const res = await config(file);
     const configs: BuildConfig[] = Array.isArray(res) ? res : [res];
 
     for (const config of configs) {
-      if (cmd.only && !cmd.only.includes(config.name)) continue;
-      if (cmd.fromCache) delete config.pgconfig.database;
-      else if (cmd.skipCache) delete config.pgconfig.schemaCacheFile;
-      await write(config);
+      if (cmd.only && !cmd.only.includes(config.config.name)) continue;
+      if (cmd.fromCache) delete config.config.database;
+      else if (cmd.skipCache) delete config.config.schemaCacheFile;
+      await write(await config.read());
     }
   }));
 
@@ -48,7 +50,8 @@ commands.push(cli.command('patch')
   .description('Generate SQL statements to patch the target database not fail with the cached schema')
   .option('--commit', 'Apply the changes to the target database')
   .option('-l, --details', 'Update columns to match type and default')
-  .option('-n, --name <name>', 'Only use the named config.')
+  .option('-n, --name <name>', 'Only use the named config')
+  .option('-t, --tables <list>', 'Only target the named table(s)', str => str.split(','))
   .option('-H, --host <host>', 'Override the target connection host for the named config.')
   .option('-U, --user <user>', 'Override the target connection user for the named config.')
   .option('-W, --password [password]', 'Read the target password from the stdin for the named config.')
@@ -56,16 +59,17 @@ commands.push(cli.command('patch')
   .option('-p, --port <port>', 'Overide the target connection port for the named config.', parseInt)
   .option('-x, --force-cache', 'Force use of cached schema in configs.')
   .action(async cmd => {
+    if (typeof cmd.name === 'function') cmd.name = '';
     const file = cli.config || await findConfig(path.resolve('.'));
     const res = await config(file, { forceCache: cmd.forceCache });
     const configs: BuildConfig[] = Array.isArray(res) ? res : [res];
 
     if (cmd.name) {
-      const config = configs.find(c => c.name === cmd.name);
+      const config = configs.find(c => c.config.name === cmd.name);
       const opts: PatchOptions = { details: cmd.details, commit: cmd.commit };
       if (config) {
         if (cmd.host || cmd.user || cmd.password || cmd.database || cmd.port) {
-          opts.connect = Object.assign({}, config.pgconfig);
+          opts.connect = Object.assign({}, config.config);
           if (cmd.host) opts.connect.host = cmd.host;
           if (cmd.database) opts.connect.database = cmd.database;
           if (cmd.user) opts.connect.user = cmd.user;
@@ -77,6 +81,7 @@ commands.push(cli.command('patch')
           } else if (cmd.password) {
             opts.connect.password = cmd.password;
           }
+          if (cmd.tables) opts.tables = cmd.tables;
         }
         await patchConfig(config, opts);
       } else {
@@ -91,10 +96,11 @@ commands.push(cli.command('patch')
 interface PatchOptions {
   details?: boolean;
   commit?: boolean;
+  tables?: string[];
   connect?: pg.ClientConfig & { schemaCacheFile?: string };
 }
 async function patchConfig(config: BuildConfig, opts: PatchOptions = {}) {
-  const connect = opts.connect || config.pgconfig;
+  const connect = opts.connect || config.config;
   if (connect && connect.schemaCacheFile && connect.database) {
     const qs: string[] = [];
     const client = new pg.Client(connect);
@@ -102,18 +108,20 @@ async function patchConfig(config: BuildConfig, opts: PatchOptions = {}) {
     const cache: SchemaCache = JSON.parse(await fs.readFile(connect.schemaCacheFile, { encoding: 'utf8' }));
     const schema: SchemaCache = { tables: [] };
 
-    const name = config.name ? `${config.name} (${connect.user || process.env.USER}@${connect.host || 'localhost'}:${connect.port || 5432}/${connect.database || process.env.USER})` : `${connect.user || process.env.USER}@${connect.host || 'localhost'}:${connect.port || 5432}/${connect.database || process.env.USER})`;
+    const name = config.config.name ? `${config.config.name} (${connect.user || process.env.USER}@${connect.host || 'localhost'}:${connect.port || 5432}/${connect.database || process.env.USER})` : `${connect.user || process.env.USER}@${connect.host || 'localhost'}:${connect.port || 5432}/${connect.database || process.env.USER})`;
 
     try {
-      const cfg = config.pgconfig;
+      const cfg = config.config;
+      const built = await config.read();
       for (const tbl of (await client.query(tableQuery)).rows) {
         if (cfg.schemaInclude && !cfg.schemaInclude.includes(tbl.name)) continue;
         else if (cfg.schemaExclude && cfg.schemaExclude.includes(tbl.name)) continue;
-        else if (!config.models.find(m => m.table === tbl.name) && !cfg.schemaFull) continue;
+        else if (!built.models.find(m => m.table === tbl.name) && !cfg.schemaFull) continue;
         else schema.tables.push({ name: tbl.name, schema: tbl.schema, columns: (await client.query(columnQuery, [tbl.schema, tbl.name])).rows });
       }
 
       for (const ct of cache.tables) {
+        if (opts.tables && !opts.tables.includes(ct.name)) continue;
         const t = schema.tables.find(e => e.name === ct.name && e.schema === ct.schema);
         if (!t) {
           qs.push(`create table "${ct.name}" (${ct.columns.map(c => `"${c.name}" ${c.type}${c.nullable ? '' : ' not null'}${c.pkey ? ' primary key' : ''}${c.default ? ` default ${c.default}` : ''}`).join(', ')});`);
@@ -160,26 +168,26 @@ commands.push(cli.command('migrate <name> <path>')
     const res = await config(file);
     const configs: BuildConfig[] = Array.isArray(res) ? res : [res];
 
-    let cfg = configs.find(c => c.name === name);
-    if (!cfg) cfg = configs.find(c => c.pgconfig && c.pgconfig.database === name);
+    let cfg = configs.find(c => c.config.name === name);
+    if (!cfg) cfg = configs.find(c => c.config && c.config.database === name);
 
     if (!cfg) throw new Error(`No config matching '${name}' was found`);
-    if (!cfg.pgconfig && cfg.pgconfig.database) throw new Error(`No valid connection is specified for '${name}'`);
+    if (!cfg.config && cfg.config.database) throw new Error(`No valid connection is specified for '${name}'`);
 
     if (typeof cmd.init === 'string' && !migration.test(cmd.init)) throw new Error(`Init migration target not in proper format`);
 
     const files = (await fs.readdir(p)).filter(n => migration.test(n) && migration.exec(n)[2]);
     files.sort();
 
-    const client = new pg.Client(cfg.pgconfig);
+    const client = new pg.Client(cfg.config);
 
     try {
       await client.connect();
-      let comment: string = ((await client.query(commentQuery, [cfg.pgconfig.database])).rows[0] || {}).comment;
+      let comment: string = ((await client.query(commentQuery, [cfg.config.database])).rows[0] || {}).comment;
       if (!comment) {
         if (cmd.init) {
           comment = `# Migrations\n===\n${files.filter(f => migration.exec(f)[1] <= cmd.init).map(f => migration.exec(f)[1]).join('\n')}`;
-          await client.query(`comment on database "${cfg.pgconfig.database}" is '${comment.replace(/'/g, '\'\'')}';`);
+          await client.query(`comment on database "${cfg.config.database}" is '${comment.replace(/'/g, '\'\'')}';`);
         } else {
           throw new Error(`Database '${name}' migrations are not initialized`);
         }
@@ -188,7 +196,7 @@ commands.push(cli.command('migrate <name> <path>')
       if (!migrations.test(comment)) {
         if (cmd.init) {
           comment += `${comment ? '\n\n' : ''}# Migrations\n===\n${files.filter(f => migration.exec(f)[1] <= cmd.init).map(f => migration.exec(f)[1]).join('\n')}`;
-          await client.query(`comment on database "${cfg.pgconfig.database}" is '${comment.replace(/'/g, '\'\'')}';`);
+          await client.query(`comment on database "${cfg.config.database}" is '${comment.replace(/'/g, '\'\'')}';`);
         } else {
           throw new Error(`Database '${name}' migrations are not initialized in comment '${comment}'`);
         }
@@ -202,7 +210,7 @@ commands.push(cli.command('migrate <name> <path>')
         if (files.find(f => f.startsWith(cmd.applied))) {
           ran.push(cmd.applied);
           ran.sort();
-          await client.query(`comment on database "${cfg.pgconfig.database}" is '${`${pre}# Migrations\n===\n${ran.join('\n')}`.replace(/'/g, '\'\'')}';`);
+          await client.query(`comment on database "${cfg.config.database}" is '${`${pre}# Migrations\n===\n${ran.join('\n')}`.replace(/'/g, '\'\'')}';`);
           console.log(`Marked ${cmd.applied} as applied.`);
         } else {
           throw new Error(`No migration found matching '${cmd.applied}'`);
@@ -216,7 +224,7 @@ commands.push(cli.command('migrate <name> <path>')
           await client.query(await fs.readFile(path.join(p, m), { encoding: 'utf8' }));
           if (!ran.includes(cmd.reapply)) ran.push(`${migration.exec(m)[1]}`);
           ran.sort();
-          await client.query(`comment on database "${cfg.pgconfig.database}" is '${`${pre}# Migrations\n===\n${ran.join('\n')}`.replace(/'/g, '\'\'')}';`);
+          await client.query(`comment on database "${cfg.config.database}" is '${`${pre}# Migrations\n===\n${ran.join('\n')}`.replace(/'/g, '\'\'')}';`);
           await client.query('commit;');
         } else {
           throw new Error(`No migration found matching '${cmd.reapply}'`);
@@ -229,7 +237,7 @@ commands.push(cli.command('migrate <name> <path>')
         });
         if (start < ran.length) {
           ran.sort();
-          await client.query(`comment on database "${cfg.pgconfig.database}" is '${`${pre}# Migrations\n===\n${ran.join('\n')}`.replace(/'/g, '\'\'')}';`);
+          await client.query(`comment on database "${cfg.config.database}" is '${`${pre}# Migrations\n===\n${ran.join('\n')}`.replace(/'/g, '\'\'')}';`);
           console.log(`Marked ${ran.length - start} migration${ran.length - start > 1 ? 's' : ''} as applied`);
         } else {
           console.log('No matching non-applied migrations found.');
@@ -245,7 +253,7 @@ commands.push(cli.command('migrate <name> <path>')
           await client.query('begin;');
           await client.query(await fs.readFile(path.join(p, m), { encoding: 'utf8' }));
           ran.push(`${migration.exec(m)[1]}`);
-          await client.query(`comment on database "${cfg.pgconfig.database}" is '${`${pre}# Migrations\n===\n${ran.join('\n')}`.replace(/'/g, '\'\'')}';`);
+          await client.query(`comment on database "${cfg.config.database}" is '${`${pre}# Migrations\n===\n${ran.join('\n')}`.replace(/'/g, '\'\'')}';`);
           await client.query('commit;');
         }
       }

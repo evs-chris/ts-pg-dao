@@ -8,8 +8,11 @@ export interface Config {
   name?: string;
 }
 
-export interface BuildConfig extends Config {
-  pgconfig: BuilderConfig;
+export type BuiltConfig = Config & { pgconfig?: BuilderConfig };
+
+export interface BuildConfig {
+  config: BuilderConfig;
+  read(): Promise<BuiltConfig>;
 }
 
 export interface MergedOutput {
@@ -307,18 +310,22 @@ export const columnQuery = `select cs.column_name as name, cs.is_nullable = 'YES
 export const commentQuery =  `select shobj_description((select oid from pg_database where datname = $1), 'pg_database') as comment;`;
 export const enumQuery = (type: string) => `select enum_range(null::${type})::varchar[] as values;`;
 
-export function config(config: BuilderConfig, fn: (builder: Builder) => Promise<Config>): Promise<BuildConfig> {
+export function config(config: BuilderConfig, fn: (builder: Builder) => Promise<Config>): BuildConfig {
   const builder = new PrivateBuilder(config);
 
-  return (async () => {
-    try {
-      const res = await fn(builder) as BuildConfig;
-      res.pgconfig = config;
-      return res;
-    } finally {
-      await builder.end();
+  return {
+    config,
+    read: async () => {
+      try {
+        const res: BuiltConfig = await fn(builder);
+        res.pgconfig = config;
+        if (!res.name) res.name = config.name;
+        return res;
+      } finally {
+        await builder.end();
+      }
     }
-  })();
+  };
 }
 
 export interface Table {
@@ -387,7 +394,7 @@ export const Types: { [key: string]: TSType } = {
   _numeric: 'string[]',
 }
 
-export type BuilderConfig = pg.ClientConfig & SchemaConfig;
+export type BuilderConfig = pg.ClientConfig & SchemaConfig & { name?: string };
 export interface SchemaConfig {
   schemaCacheFile?: string;
   schemaInclude?: string[];
@@ -459,8 +466,8 @@ export class Builder {
         console.log(`Reading schema from cache ${this._config.schemaCacheFile}`);
         this._schemaCache = JSON.parse(await fs.readFile(this._config.schemaCacheFile, { encoding: 'utf8' }));
       }
-      const table = this._schemaCache.tables.find(t => t.schema === schema && t.name === name);
-      if (!table) throw new Error(`"${schema}.${table}" not found in schema cache ${this._config.schemaCacheFile}`);
+      let table = this._schemaCache.tables.find(t => t.schema === schema && t.name === name);
+      if (!table) throw new Error(`"${schema}.${name}" not found in schema cache ${this._config.schemaCacheFile}`);
       cols = table.columns;
     }
 

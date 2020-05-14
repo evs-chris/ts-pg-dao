@@ -1,7 +1,7 @@
 import * as fs from 'fs-extra';
 import * as ts from 'typescript';
 import * as path from 'path';
-import { BuildConfig, BuilderOptions, Config, Model, Column, Query, Param, Output, MergedOutput, IncludeMap, IncludeExtraDef, SchemaCache, tableQuery, columnQuery } from './main';
+import { BuildConfig, BuiltConfig, BuilderOptions, Config, Model, Column, Query, Param, Output, MergedOutput, IncludeMap, IncludeExtraDef, SchemaCache, tableQuery, columnQuery } from './main';
 import * as requireCwd from 'import-cwd';
 import * as pg from 'pg';
 
@@ -24,10 +24,8 @@ export async function config(file, opts: ConfigOpts = {}): Promise<BuildConfig|B
     default?: any
   }
   const config: ConfigModule = {};
-  const fc = BuilderOptions.forceCache;
   if (opts.forceCache) BuilderOptions.forceCache = true;
   (new Function('exports', 'require', '__filename', '__dirname', output.outputText))(config, requireCwd, path.resolve(file), path.dirname(path.resolve(file)));
-  BuilderOptions.forceCache = fc;
 
   if (typeof config.default !== 'object' || typeof config.default.then !== 'function') {
     throw new Error('Config file should export a default Promise<BuildConfig|BuildConfig[]>.');
@@ -44,7 +42,7 @@ type ProcessModel = Model & { extraTypes?: Array<[string, string]>, extraImports
 
 const modelImport = /^\s*import\b/;
 
-export async function write(config: BuildConfig): Promise<void> {
+export async function write(config: BuiltConfig): Promise<void> {
   const { models } = config;
 
   let pathy: boolean = false;
@@ -63,7 +61,7 @@ export async function write(config: BuildConfig): Promise<void> {
 
   let model: ProcessModel;
   // if there is a database in the client config, use the database, otherwise it may just be cached schema
-  const client: false | pg.Client = !!config.pgconfig.database && await new pg.Client(config.pgconfig);
+  const client: false | pg.Client = !!config.pgconfig.database && new pg.Client(config.pgconfig);
   try {
     client && await client.connect();
 
@@ -167,7 +165,7 @@ export async function write(config: BuildConfig): Promise<void> {
 }
 
 const dates = ['timestamp', 'date'];
-function serverModel(config: BuildConfig, model: ProcessModel): string {
+function serverModel(config: BuiltConfig, model: ProcessModel): string {
   let tpl = `import * as dao from '@evs-chris/ts-pg-dao/runtime';${model.extraImports && model.extraImports.length ? '\n' + model.extraImports.map(o => `import ${o} from './${o}';`).join('\n') + '\n' : ''}${model._imports.length ? '\n' + model._imports.join(';\n') + '\n' : ''}${model.serverOuter ? `\n${model.serverOuter}` : ''}
 export default class ${model.name} {
   static get table() { return ${JSON.stringify(model.table)}; }
