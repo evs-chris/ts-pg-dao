@@ -229,6 +229,8 @@ async function patchConfig(config: BuildConfig, opts: PatchOptions = {}) {
 
     const name = config.config.name ? `${config.config.name} (${connect.user || process.env.USER}@${connect.host || 'localhost'}:${connect.port || 5432}/${connect.database || process.env.USER})` : `${connect.user || process.env.USER}@${connect.host || 'localhost'}:${connect.port || 5432}/${connect.database || process.env.USER})`;
 
+    console.error(`Patching ${name}...`);
+
     try {
       const cfg = config.config;
       const built = await config.read();
