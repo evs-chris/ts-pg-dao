@@ -80,8 +80,12 @@ export async function write(config: BuiltConfig): Promise<void> {
     
       for (i = 0; i < model.queries.length; i++) {
         const q = model.queries[i];
-        const res = processQuery(config, q);
-        if (res.interface) model.extraTypes.push(res.interface);
+        const res = processQuery(config, q, model);
+        if (res.interface) {
+          const prev = model.extraTypes.find(([t]) => t === res.interface[0]);
+          if (!prev) model.extraTypes.push(res.interface);
+          else if (prev[1] !== res.interface[1]) throw new Error(`Query ${q.name} interface ${prev[0]} has multiple conflicting types`);
+        }
         if (res.outer) model.serverOuter += res.outer + '\n';
         model.serverBody += '\n\n' + res.method;
         if (res.others.length) {
@@ -448,7 +452,7 @@ interface QueryPart {
 
 type QueryPartCheck = (params: number) => [string, number];
 
-function processQuery(config: Config, start: Query): ProcessQueryResult {
+function processQuery(config: Config, start: Query, model: ProcessModel): ProcessQueryResult {
   const query = start as ProcessQuery;
   const parms: Param[] = [];
   const aliases: AliasMap = query.aliases = {};
@@ -562,7 +566,7 @@ function processQuery(config: Config, start: Query): ProcessQueryResult {
   const loader = buildLoader(query);
 
   let outer = `const __${query.name}_sql = ${JSON.stringify(sql)};`;
-  if (query.result) outer += `\nexport type ${query.result} = ${loader.interface};`
+  if (query.result && !model.extraTypes.find(([t]) => t === query.result)) outer += `\nexport type ${query.result} = ${loader.interface};`
 
   const others = [];
 
