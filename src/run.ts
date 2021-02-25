@@ -200,8 +200,8 @@ export default class ${model.name} {
     tpl += `
   static async save(con: dao.Connection, model: ${model.name}): Promise<void> {
     if (!model) throw new Error('Model is required');${model.hooks.beforesave ? `
-    ${model.name}.beforesave(model);
-    ` : ''}${model.fields.filter(f => ~dates.indexOf(f.pgtype)).map(f => `if (typeof model.${f.name} === 'string') model.${f.name} = new Date(model.${f.name});
+    ${model.name}.beforesave(model);` : ''}
+    ${model.fields.filter(f => ~dates.indexOf(f.pgtype)).map(f => `if (typeof model.${f.name} === 'string') model.${f.name} = new Date(model.${f.name});
     `).join('')}
 
     if (${model.fields.filter(f => f.pkey || f.optlock).map(f => `model.${f.name} !== undefined`).join(' && ')}) {${updateMembers(model, '      ')}
@@ -228,7 +228,8 @@ export default class ${model.name} {
   static async delete(con: dao.Connection, model: ${model.name}): Promise<void> {
     if (!model) throw new Error('Model is required');${model.hooks.beforedelete ? `
     ${model.name}.beforeDelete(model);` : ''}
-
+    ${model.fields.filter(f => ~dates.indexOf(f.pgtype)).map(f => `if (typeof model.${f.name} === 'string') model.${f.name} = new Date(model.${f.name});
+    `).join('')}
     const transact = !con.inTransaction;
     if (transact) await con.begin();
     try {
