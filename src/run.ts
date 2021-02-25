@@ -690,7 +690,10 @@ interface Depth { n: number };
 function processLoader(query: ProcessQuery, alias: Alias, depth: Depth = { n: 0 }): string {
   const r = depth.n;
   let tpl = `
-      const o${r || ''}: object = ${alias.model.name}.load(r, null, ${alias.prefix ? JSON.stringify(alias.prefix) : '\'\''}, cache);${!r ? '\n\n      ' : ''}`;
+      const o${r || ''}: object = ${alias.model.name}.load(r, null, ${alias.prefix ? JSON.stringify(alias.prefix) : '\'\''}, cache)`
+  // if key cols aren't included, allow the object to be created every time
+  if (alias.cols && !alias.model.cols.filter(c => c.pkey).reduce((a, c) => a && !!alias.cols.find(a => a.name === c.name), true)) tpl += ' || {}';
+  tpl += `;${!r ? '\n\n      ' : ''}`;
   if (alias.extra && alias.extra.length) {
     for (const e of alias.extra) {
      tpl += `o${r || ''}[${JSON.stringify(e.name)}] = r[${JSON.stringify(e.name)}];
