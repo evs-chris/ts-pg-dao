@@ -228,6 +228,11 @@ export class Field {
     this.field.retype = type;
     return this;
   }
+
+  trim(b: boolean): Field {
+    this.field.trim = b;
+    return this;
+  }
 }
 
 export interface QueryOptions {
@@ -354,6 +359,7 @@ export interface Column {
   json?: true;
   optlock?: boolean;
   enum?: string[];
+  trim?: boolean;
 }
 
 export type TSType = 'Date' | 'number' | 'string' | 'any' | 'boolean' | 'Date[]' | 'number[]' | 'string[]' | 'any[]' | 'boolean[]' | 'any' | 'any[]';
