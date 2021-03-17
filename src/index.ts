@@ -1,12 +1,37 @@
 import * as pg from 'pg';
 
+/**
+ * A thin wrapper on top of pg.Client that provides basic transaction support, 
+ * and a convenient way to immediately execute a query with a template string.
+ */
 export interface Connection extends pg.Client {
+  /** 
+   * Start a transaction for this connection. If there is already an active
+   * transaction for this connection, this is a noop.
+   * */
   begin(): Promise<void>;
+  /** Roll back the current transaction for this connection. */
   rollback(): Promise<void>;
+  /** Complete the current transaction for this connection. */
   commit(): Promise<void>;
+  /** Determine whether there is an active transaction for this connection. */
   inTransaction: boolean;
+  /** Execute the given block in a transaction. */
   transact<T>(cb: (con: Connection) => Promise<T>): Promise<T>;
+  /**
+   * Execute the given template string with its interpolated values as
+   * parameters. If you need to do literal text interpolation inside the query
+   * e.g. add a part to a where clause, you can use the `lit` function of the
+   * connection, which will cause the query to be changed rather than adding
+   * a parameter.
+   *
+   * @returns a pg.QueryResult with any resulting rows attached
+   */
   sql<T = any>(string: TemplateStringsArray, ...parts: any[]): Promise<pg.QueryResult & { rows: T[] }>;
+  /**
+   * Wrap a string such that it can be included directly in a tagged `sql` template
+   * without being turned into a parameter.
+   */
   lit(sql: string): SQL;
   /**
    * Execute the given callback immediately after the current transaction
@@ -22,6 +47,11 @@ export interface Connection extends pg.Client {
   onRollback(run: () => void|Promise<void>): Promise<void>;
 }
 
+/**
+ * Enhances the given pg.Client with a few convenience methods for managing
+ * transactions and a tagged template helper for executing a query with
+ * interpolations as parameters.
+ */
 export function enhance(client: pg.Client): Connection {
   if ('ts-pg-dao' in client) return client as Connection;
   const res = client as any;
