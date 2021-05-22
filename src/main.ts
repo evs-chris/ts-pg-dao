@@ -1,5 +1,6 @@
 import * as pg from 'pg';
 import * as fs from 'fs-extra';
+export { PatchOptions, PatchResult, patchConfig } from './patch';
 
 export interface Config {
   output: Output;

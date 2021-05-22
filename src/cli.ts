@@ -6,10 +6,11 @@ import * as fs from 'fs-extra';
 import * as pg from 'pg';
 import { config, write, ConfigOpts } from './run';
 import { BuildConfig, tableQuery, columnQuery, commentQuery, enumQuery, SchemaCache, Types } from './main';
+import { PatchOptions, patchConfig } from './patch';
 
 const pkg = require(path.join(__dirname, '../package.json'));
 
-async function findConfig(dir): Promise<string> {
+async function findConfig(dir: string): Promise<string> {
   try {
     await fs.stat(path.join(dir, 'ts-pg-dao.config.ts'));
     return path.resolve(dir, 'ts-pg-dao.config.ts');
@@ -202,78 +203,15 @@ commands.push(cli.command('patch')
           }
           if (cmd.tables) opts.tables = cmd.tables;
         }
-        await patchConfig(config, opts);
+        await patchConfig(config.config, opts);
       } else {
         console.error(`No config named '${cmd.name}' found.`);
         process.exit(1);
       }
     } else {
-      for (const config of configs) await patchConfig(config);
+      for (const config of configs) await patchConfig(config.config);
     }
   }));
-
-interface PatchOptions {
-  details?: boolean;
-  commit?: boolean;
-  tables?: string[];
-  connect?: pg.ClientConfig & { schemaCacheFile?: string };
-}
-async function patchConfig(config: BuildConfig, opts: PatchOptions = {}) {
-  const connect = opts.connect || config.config;
-  if (connect && connect.schemaCacheFile && connect.database) {
-    const qs: string[] = [];
-    const client = new pg.Client(connect);
-    await client.connect();
-    const cache: SchemaCache = JSON.parse(await fs.readFile(connect.schemaCacheFile, { encoding: 'utf8' }));
-    const schema: SchemaCache = { tables: [] };
-
-    const name = config.config.name ? `${config.config.name} (${connect.user || process.env.USER}@${connect.host || 'localhost'}:${connect.port || 5432}/${connect.database || process.env.USER})` : `${connect.user || process.env.USER}@${connect.host || 'localhost'}:${connect.port || 5432}/${connect.database || process.env.USER})`;
-
-    console.error(`Patching ${name}...`);
-
-    try {
-      const cfg = config.config;
-      const built = await config.read();
-      for (const tbl of (await client.query(tableQuery)).rows) {
-        if (cfg.schemaInclude && !cfg.schemaInclude.includes(tbl.name)) continue;
-        else if (cfg.schemaExclude && cfg.schemaExclude.includes(tbl.name)) continue;
-        else if (!built.models.find(m => m.table === tbl.name) && !cfg.schemaFull) continue;
-        else schema.tables.push({ name: tbl.name, schema: tbl.schema, columns: (await client.query(columnQuery, [tbl.schema, tbl.name])).rows });
-      }
-
-      for (const ct of cache.tables) {
-        if (opts.tables && !opts.tables.includes(ct.name)) continue;
-        const t = schema.tables.find(e => e.name === ct.name && e.schema === ct.schema);
-        if (!t) {
-          qs.push(`create table "${ct.name}" (${ct.columns.map(c => `"${c.name}" ${c.type}${c.nullable ? '' : ' not null'}${c.pkey ? ' primary key' : ''}${c.default ? ` default ${c.default}` : ''}`).join(', ')});`);
-        } else {
-          for (const col of ct.columns) {
-            const c = t.columns.find(e => e.name === col.name);
-            if (!c) {
-              qs.push(`alter table "${ct.name}" add column "${col.name}" ${col.type}${col.nullable ? '' : ' not null'}${col.default ? ` default ${col.default}` : ''};`);
-            } else if (opts.details && (c.default !== col.default || c.nullable !== col.nullable || c.type !== col.type)) {
-              if (c.type !== col.type) qs.push(`alter table "${ct.name}" alter column "${col.name}" type ${col.type};`);
-              if (c.default !== col.default) qs.push(`alter table "${ct.name}" alter column "${col.name}" ${col.default ? 'set' : 'drop'} default${col.default ? ` ${col.default}` : ''};`);
-              if (c.nullable !== col.nullable) qs.push(`alter table "${ct.name}" alter column "${col.name}" ${col.nullable ? 'drop' : 'set'} not null;`);
-            }
-          }
-        }
-      }
-
-      if (qs.length) {
-        console.log(`\nPatches for ${name}`);
-        console.log(qs.join('\n'));
-        if (opts.commit) {
-          await client.query(['begin;'].concat(qs).concat('commit;').join('\n'));
-        }
-      } else {
-        console.log(`\nNo patches needed for ${name}`);
-      }
-    } finally {
-      await client.end();
-    }
-  }
-}
 
 const migration = /^([0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]{4})([-\.].*sql)?/;
 const migrations = /((?:[\r\n]|.)*)(# Migrations\n\=\=\=\n(?:[\r\n]|.)*)/m;
