@@ -288,6 +288,7 @@ export default class ${model.name} {
 
   for (const f of model.cols) {
     tpl += `    if ((prefix + '${f.name}') in row) model.${f.alias || f.name} = prefix ? row[prefix + '${f.name}'] : row.${f.name};\n`
+    if (f.pgtype === 'date') tpl += `    if (model.${f.alias || f.name} instanceof Date) model.${f.alias || f.name} = model.${f.alias || f.name}.toISOString().substr(0, 10) + 'T00:00';\n`;
     if (f.trim) tpl += `    if (typeof model.${f.alias || f.name} === 'string') model.${f.alias || f.name} = model.${f.alias || f.name}.trim();\n`
   }
     
