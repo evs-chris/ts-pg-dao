@@ -168,7 +168,7 @@ export async function write(config: BuiltConfig): Promise<void> {
   }
 }
 
-const dates = ['timestamp', 'date'];
+const dates = ['timestamp'];
 function serverModel(config: BuiltConfig, model: ProcessModel): string {
   let tpl = `import * as dao from '@evs-chris/ts-pg-dao/runtime';${model.extraImports && model.extraImports.length ? '\n' + model.extraImports.map(o => `import ${o} from './${o}';`).join('\n') + '\n' : ''}${model._imports.length ? '\n' + model._imports.join(';\n') + '\n' : ''}${model.serverOuter ? `\n${model.serverOuter}` : ''}
 export default class ${model.name} {
@@ -365,7 +365,8 @@ function colToParam(f) {
 
 function updateMembers(model: Model, prefix: string): string {
   let res = `\n${prefix}const params = [];\n${prefix}const sets = [];\n${prefix}let sql = 'UPDATE ${model.table} SET ';`;
-  if (model.fields.find(f => f.optlock)) res += `\n${prefix}const lock = new Date();`;
+  const lock = model.fields.find(f => f.optlock);
+  if (lock) res += `\n${prefix}const lock = new Date()${lock.pgtype === 'date' ? `.toISOString().substr(0, 10)` : ''};`;
   model.fields.forEach(f => {
     if (!f.pkey && !f.optlock) {
       res += setParam(f, prefix, `sets.push('"${f.name}" = $' + params.length)`);
