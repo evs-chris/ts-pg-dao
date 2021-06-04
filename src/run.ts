@@ -243,6 +243,13 @@ export default class ${model.name} {
       throw e;
     }
   }
+
+  static async deleteById(con: dao.Connection, ${model.pkeys.map(k => `${k.alias || k.name}: ${k.retype || k.type}`).join(', ')}): Promise<boolean> {
+    const params = [${model.pkeys.map(k => k.alias || k.name).join(', ')}];
+    const res = await con.query(\`delete from "${model.table}" where ${model.pkeys.map((k, i) => `"${k.name}" = $${i + 1}`).join(' AND ')}\`, params);
+    if (res.rowCount !== 1) return false;
+    return true;
+  }
   
   ${model.queries.find(q => q.name === 'findById') ? '' : `static async findById(con: dao.Connection, ${model.pkeys.map(k => `${k.alias || k.name}: ${k.retype || k.type}`).join(', ')}, optional: boolean = false): Promise<${model.name}> {
     return await ${model.name}.findOne(con, '${model.pkeys.map((k, i) => `${k.name} = $${i + 1}`).join(' AND ')}', [${model.pkeys.map(k => k.alias || k.name).join(', ')}], optional)
