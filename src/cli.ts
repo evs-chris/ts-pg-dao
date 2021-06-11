@@ -155,6 +155,16 @@ commands.push(cli.command('cache')
             }
           }
         }
+
+        // check for *
+        if (cmd.tables && cmd.tables.length === 1 && cmd.tables[0] === '*') {
+          for (const t of schema.tables) {
+            if (!cache.tables.find(c => c.name === t.name)) {
+              console.log(`Adding "${t.schema}"."${t.name}"...`);
+              cache.tables.push(t);
+            }
+          }
+        }
       }
 
       if (cmd.update || cmd.remove) {
