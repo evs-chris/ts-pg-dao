@@ -60,6 +60,7 @@ commands.push(cli.command('cache')
   .option('-W, --password [password]', 'Read the target password from the stdin for the named config.')
   .option('-d, --database <database>', 'Override the target connection database for the named config.')
   .option('-p, --port <port>', 'Overide the target connection port for the named config.', parseInt)
+  .option('-s, --ssl', 'Turn on (non-verified) ssl when connecting.')
   .action(async cmd => {
     if (typeof cmd.name === 'function') cmd.name = '';
     const file = cli.config || await findConfig(path.resolve('.'));
@@ -79,6 +80,7 @@ commands.push(cli.command('cache')
         if (cmd.database) connect.database = cmd.database;
         if (cmd.user) connect.user = cmd.user;
         if (cmd.port) connect.port = cmd.port;
+        if (cmd.ssl) connect.ssl = { rejectUnauthorized: false };
         if (cmd.password === true) {
           const r = rl.createInterface({ input: process.stdin, output: process.stdout });
           connect.password = await new Promise(ok => r.question('Password: ', ok));
@@ -187,6 +189,7 @@ commands.push(cli.command('patch')
   .option('-W, --password [password]', 'Read the target password from the stdin for the named config.')
   .option('-d, --database <database>', 'Override the target connection database for the named config.')
   .option('-p, --port <port>', 'Overide the target connection port for the named config.', parseInt)
+  .option('-s, --ssl', 'Turn on (non-verified) ssl when connecting.')
   .option('-x, --force-cache', 'Force use of cached schema in configs.')
   .action(async cmd => {
     if (typeof cmd.name === 'function') cmd.name = '';
@@ -204,6 +207,7 @@ commands.push(cli.command('patch')
           if (cmd.database) opts.connect.database = cmd.database;
           if (cmd.user) opts.connect.user = cmd.user;
           if (cmd.port) opts.connect.port = cmd.port;
+          if (cmd.ssl) opts.connect.ssl = { rejectUnauthorized: false };
           if (cmd.password === true) {
             const r = rl.createInterface({ input: process.stdin, output: process.stdout });
             opts.connect.password = await new Promise(ok => r.question('Password: ', ok));
