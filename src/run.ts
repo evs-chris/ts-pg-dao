@@ -416,11 +416,18 @@ function insertMembers(model: Model, prefix: string): string {
 function setParam(col: Column, prefix: string, set: string, model: string = 'model', params: string = 'params'): string {
   let cond = `\n${prefix}if (${model}.hasOwnProperty('${col.alias || col.name}')) { `
   if (col.pgtype !== 'char' && col.pgtype !== 'varchar' && col.pgtype !== 'bpchar' && col.pgtype !== 'text') {
-    cond += `\n${prefix}  if ((${model}['${col.alias || col.name}'] as any) === '') { ${params}.push(null); ${set}; }\n${prefix}  else { ${params}.push(${colToParam(col)}); ${set}; }\n${prefix}`;
+    if (col.nullable) {
+      cond += `\n${prefix}  if ((${model}['${col.alias || col.name}'] as any) === '') { ${params}.push(null); ${set}; }\n${prefix}  else { ${params}.push(${colToParam(col)}); ${set}; }\n${prefix}`;
+    } else if (col.default) {
+      cond += `\n${prefix}  if ((${model}['${col.alias || col.name}'] as any) === '') { ${params}.push(${col.default}); ${set}; }\n${prefix}  else { ${params}.push(${colToParam(col)}); ${set}; }\n${prefix}`;
+    } else if (col.pgtype.substr(0, 3) === 'int' || col.pgtype === 'numeric' || col.pgtype.substr(0, 5) === 'float') {
+      cond += `\n${prefix}  if ((${model}['${col.alias || col.name}'] as any) === '') { ${params}.push(0); ${set}; }\n${prefix}  else { ${params}.push(${colToParam(col)}); ${set}; }\n${prefix}`;
+    }
   } else {
     cond += `${params}.push(${colToParam(col)}); ${set}; `;
   }
   cond += '}';
+
   return cond;
 }
 
