@@ -422,6 +422,8 @@ function setParam(col: Column, prefix: string, set: string, model: string = 'mod
       cond += `\n${prefix}  if ((${model}['${col.alias || col.name}'] as any) === '') { ${params}.push(${col.default}); ${set}; }\n${prefix}  else { ${params}.push(${colToParam(col)}); ${set}; }\n${prefix}`;
     } else if (col.pgtype.substr(0, 3) === 'int' || col.pgtype === 'numeric' || col.pgtype.substr(0, 5) === 'float') {
       cond += `\n${prefix}  if ((${model}['${col.alias || col.name}'] as any) === '') { ${params}.push(0); ${set}; }\n${prefix}  else { ${params}.push(${colToParam(col)}); ${set}; }\n${prefix}`;
+    } else {
+      cond += `${params}.push(${colToParam(col)}); ${set}; `;
     }
   } else {
     cond += `${params}.push(${colToParam(col)}); ${set}; `;
