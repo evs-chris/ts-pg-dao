@@ -124,12 +124,14 @@ export async function write(config: BuiltConfig): Promise<void> {
       const cfg = config.pgconfig;
       console.log(`\t - generating schema cache`);
 
+      const allCols = (await client.query(columnQuery)).rows;
+
       try {
         for (const tbl of (await client.query(tableQuery)).rows) {
           if (cfg.schemaInclude && !cfg.schemaInclude.includes(tbl.name)) continue;
           else if (cfg.schemaExclude && cfg.schemaExclude.includes(tbl.name)) continue;
           else if (!models.find(m => m.table === tbl.name) && !cfg.schemaFull) continue;
-          else cache.tables.push({ name: tbl.name, schema: tbl.schema, columns: (await client.query(columnQuery, [tbl.schema, tbl.name])).rows });
+          else cache.tables.push({ name: tbl.name, schema: tbl.schema, columns: allCols.filter(c => c.schema === tbl.schema && c.table === tbl.name).map(c => Object.assign({}, c, { table: undefined, schema: undefined, length: c.length || undefined })) });
         }
       } catch (e) {
         console.error(`Error generating schema cache:`, e);
@@ -301,6 +303,18 @@ export default class ${model.name} {
     
   tpl += `    
     return model;
+  }`;
+
+  tpl += `
+
+  static truncateStrings(model: ${model.name}) {`;
+  const strs = ['char', 'varchar', 'bpchar'];
+  for (const c of model.cols) {
+    if (c.length && strs.includes(c.pgtype) && !c.retype) {
+      tpl += `\n    if (model.${c.alias || c.name} && model.${c.alias || c.name}.length > ${c.length}) model.${c.alias || c.name} = model.${c.alias || c.name}.substr(0, ${c.length});`;
+    }
+  }
+  tpl += `
   }`;
 
   tpl += `${model.serverBody}\n`;

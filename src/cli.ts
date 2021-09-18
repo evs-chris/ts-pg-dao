@@ -5,7 +5,7 @@ import * as rl from 'readline';
 import * as fs from 'fs-extra';
 import * as pg from 'pg';
 import { config, write, ConfigOpts } from './run';
-import { BuildConfig, tableQuery, columnQuery, commentQuery, enumQuery, SchemaCache, Types } from './main';
+import { BuildConfig, tableQuery, columnQuery, ColumnSchema, commentQuery, enumQuery, SchemaCache, Types } from './main';
 import { PatchOptions, patchConfig } from './patch';
 
 const pkg = require(path.join(__dirname, '../package.json'));
@@ -116,9 +116,10 @@ commands.push(cli.command('cache')
             const client = new pg.Client(connect);
             await client.connect();
             try {
+              const allCols = (await client.query(columnQuery)).rows;
               const ts = (await client.query(tableQuery)).rows;
               for (const t of ts) {
-                const cols = (await client.query(columnQuery, [t.schema, t.name])).rows;
+                const cols: ColumnSchema[] = allCols.filter(c => c.schema === t.schema && c.table === t.name).map(c => Object.assign({}, c, { table: undefined, schema: undefined, length: c.length || undefined }));
                 for (const col of cols) {
                   if (!Types[col.type]) { // check for enums
                     try {

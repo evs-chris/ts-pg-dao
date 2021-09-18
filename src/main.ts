@@ -312,7 +312,7 @@ export interface IncludeMapDef {
 export type IncludeMap = IncludeMapDef & { '*'?: string[] };
 
 export const tableQuery = `select table_name as name, table_schema as schema from information_schema.tables where table_type = 'BASE TABLE' and table_schema not like 'pg_%' and table_schema <> 'information_schema' order by table_schema asc, table_name asc;`;
-export const columnQuery = `select cs.column_name as name, cs.is_nullable = 'YES' as nullable, (select keys.constraint_name from information_schema.key_column_usage keys join information_schema.table_constraints tc on keys.constraint_name = tc.constraint_name and keys.constraint_schema = tc.constraint_schema and tc.table_name = keys.table_name where keys.table_schema = cs.table_schema and keys.table_name = cs.table_name and keys.column_name = cs.column_name and tc.constraint_type = 'PRIMARY KEY') is not null as pkey, cs.udt_name as type, cs.column_default as default from information_schema.columns cs join information_schema.tables ts on ts.table_name = cs.table_name and ts.table_schema = cs.table_schema where ts.table_schema = $1 and ts.table_name = $2 order by cs.column_name asc;`;
+export const columnQuery = `select ts.table_schema as schema, ts.table_name as table, cs.column_name as name, cs.is_nullable = 'YES' as nullable, (select keys.constraint_name from information_schema.key_column_usage keys join information_schema.table_constraints tc on keys.constraint_name = tc.constraint_name and keys.constraint_schema = tc.constraint_schema and tc.table_name = keys.table_name where keys.table_schema = cs.table_schema and keys.table_name = cs.table_name and keys.column_name = cs.column_name and tc.constraint_type = 'PRIMARY KEY') is not null as pkey, cs.udt_name as type, cs.column_default as default, cs.character_maximum_length as length from information_schema.columns cs join information_schema.tables ts on ts.table_name = cs.table_name and ts.table_schema = cs.table_schema where ts.table_schema <> 'pg_catalog' and ts.table_schema <> 'information_schema' order by cs.column_name asc;`;
 export const commentQuery =  `select shobj_description((select oid from pg_database where datname = $1), 'pg_database') as comment;`;
 export const enumQuery = (type: string) => `select enum_range(null::${type})::varchar[] as values;`;
 
@@ -361,6 +361,7 @@ export interface Column {
   optlock?: boolean;
   enum?: string[];
   trim?: boolean;
+  length?: number;
 }
 
 export type TSType = 'Date' | 'number' | 'string' | 'any' | 'boolean' | 'Date[]' | 'number[]' | 'string[]' | 'any[]' | 'boolean[]' | 'any' | 'any[]';
@@ -401,7 +402,7 @@ export const Types: { [key: string]: TSType } = {
   _numeric: 'string[]',
 }
 
-export type BuilderConfig = pg.ClientConfig & SchemaConfig & { name?: string };
+export type BuilderConfig = pg.ClientConfig & SchemaConfig & { name?: string; _cache: any };
 export interface SchemaConfig {
   schemaCacheFile?: string;
   schemaInclude?: string[];
@@ -420,6 +421,9 @@ export interface ColumnSchema {
   type: string;
   default: string;
   enum?: string[];
+  length?: number;
+  schema?: string;
+  table?: string;
 }
 export interface SchemaCache {
   tables: TableSchema[];
@@ -449,23 +453,29 @@ export class Builder {
     let cols: ColumnSchema[];
 
     if (this._config.database && !BuilderOptions.forceCache) {
-      try {
-        const client = await this.connect();
-        try {
-          cols = (await client.query(columnQuery, [schema, name])).rows;
-          for (const col of cols) {
-            if (!Types[col.type]) { // check for enums
-              try {
-                col.enum = (await client.query(enumQuery(col.type))).rows[0].values;
-              } catch {}
+      if (!this._config._cache) {
+        const cache: any = this._config._cache = {};
+        if (!cache.cols) {
+          try {
+            const client = await this.connect();
+            try {
+              cols = cache.cols = (await client.query(columnQuery)).rows;
+              for (const col of cols) {
+                if (!Types[col.type]) { // check for enums
+                  try {
+                    col.enum = (await client.query(enumQuery(col.type))).rows[0].values;
+                  } catch {}
+                }
+              }
+            } finally {
+              await client.release();
             }
+          } catch (e) {
+            console.error(`Failed to read "${schema}.${name}" schema`);
           }
-        } finally {
-          await client.release();
         }
-      } catch (e) {
-        console.error(`Failed to read "${schema}.${name}" schema`);
       }
+      cols = this._config._cache.cols.filter((c: ColumnSchema) => c.schema === schema && c.table === name).map(c => Object.assign({}, c, { table: undefined, schema: undefined }));
     }
 
     if (!cols && this._config.schemaCacheFile) {
@@ -482,7 +492,7 @@ export class Builder {
 
     const columns = cols.map((r: ColumnSchema) => {
       const col: Column = {
-        name: r.name, nullable: r.nullable, pkey: r.pkey, pgtype: r.type, type: r.type[0] === '_' ? 'any[]' : 'any', elidable: false
+        name: r.name, nullable: r.nullable, pkey: r.pkey, pgtype: r.type, type: r.type[0] === '_' ? 'any[]' : 'any', elidable: false, length: r.length
       }
       if (~col.type.toLowerCase().indexOf('json')) col.json = true;
       if (col.type[0] === '_') col.array = true;

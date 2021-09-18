@@ -39,10 +39,12 @@ export async function patchConfig(config: PatchConfig, opts: PatchOptions = {}) 
     log(`Patching ${name}...`);
 
     try {
+      const allCols = (await client.query(columnQuery)).rows;
+
       for (const tbl of (await client.query(tableQuery)).rows) {
         if (config.schemaInclude && !config.schemaInclude.includes(tbl.name)) continue;
         else if (config.schemaExclude && config.schemaExclude.includes(tbl.name)) continue;
-        else schema.tables.push({ name: tbl.name, schema: tbl.schema, columns: (await client.query(columnQuery, [tbl.schema, tbl.name])).rows });
+        else schema.tables.push({ name: tbl.name, schema: tbl.schema, columns: allCols.filter(c => c.schema === tbl.schema && c.table === tbl.name).map(c => Object.assign({}, c, { table: undefined, schema: undefined, length: c.length || undefined })) });
       }
 
       for (const ct of cache.tables) {
