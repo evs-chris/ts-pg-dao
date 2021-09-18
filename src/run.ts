@@ -299,7 +299,7 @@ export default class ${model.name} {
 `
 
   for (const f of model.cols) {
-    tpl += `    if ((prefix + '${f.name}') in row) model.${f.alias || f.name} = prefix ? row[prefix + '${f.name}'] : row.${f.name};\n`
+    tpl += `    if (\`\${prefix}${f.name}\` in row) model.${f.alias || f.name} = row[\`\${prefix}${f.name}\`];\n`
     if (f.pgtype === 'date') tpl += `    if (model.${f.alias || f.name} instanceof Date) model.${f.alias || f.name} = model.${f.alias || f.name}.toISOString().substr(0, 10) + 'T00:00';\n`;
     if (f.trim) tpl += `    if (typeof model.${f.alias || f.name} === 'string') model.${f.alias || f.name} = model.${f.alias || f.name}.trim();\n`
   }
@@ -431,14 +431,14 @@ function insertMembers(model: Model, prefix: string): string {
 }
 
 function setParam(col: Column, prefix: string, set: string, model: string = 'model', params: string = 'params'): string {
-  let cond = `\n${prefix}if (${model}.hasOwnProperty('${col.alias || col.name}')) { `
+  let cond = `\n${prefix}if ('${col.alias || col.name}' in ${model}) { `
   if (col.pgtype !== 'char' && col.pgtype !== 'varchar' && col.pgtype !== 'bpchar' && col.pgtype !== 'text') {
     if (col.nullable) {
-      cond += `\n${prefix}  if ((${model}['${col.alias || col.name}'] as any) === '') { ${params}.push(null); ${set}; }\n${prefix}  else { ${params}.push(${colToParam(col)}); ${set}; }\n${prefix}`;
+      cond += `\n${prefix}  if ((${model}.${col.alias || col.name} as any) === '') { ${params}.push(null); ${set}; }\n${prefix}  else { ${params}.push(${colToParam(col)}); ${set}; }\n${prefix}`;
     } else if (col.default) {
-      cond += `\n${prefix}  if ((${model}['${col.alias || col.name}'] as any) === '') { ${params}.push(${col.default}); ${set}; }\n${prefix}  else { ${params}.push(${colToParam(col)}); ${set}; }\n${prefix}`;
+      cond += `\n${prefix}  if ((${model}.${col.alias || col.name} as any) === '') { ${params}.push(${col.default}); ${set}; }\n${prefix}  else { ${params}.push(${colToParam(col)}); ${set}; }\n${prefix}`;
     } else if (col.pgtype.substr(0, 3) === 'int' || col.pgtype === 'numeric' || col.pgtype.substr(0, 5) === 'float') {
-      cond += `\n${prefix}  if ((${model}['${col.alias || col.name}'] as any) === '') { ${params}.push(0); ${set}; }\n${prefix}  else { ${params}.push(${colToParam(col)}); ${set}; }\n${prefix}`;
+      cond += `\n${prefix}  if ((${model}.${col.alias || col.name} as any) === '') { ${params}.push(0); ${set}; }\n${prefix}  else { ${params}.push(${colToParam(col)}); ${set}; }\n${prefix}`;
     } else {
       cond += `${params}.push(${colToParam(col)}); ${set}; `;
     }
