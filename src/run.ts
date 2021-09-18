@@ -131,7 +131,7 @@ export async function write(config: BuiltConfig): Promise<void> {
           if (cfg.schemaInclude && !cfg.schemaInclude.includes(tbl.name)) continue;
           else if (cfg.schemaExclude && cfg.schemaExclude.includes(tbl.name)) continue;
           else if (!models.find(m => m.table === tbl.name) && !cfg.schemaFull) continue;
-          else cache.tables.push({ name: tbl.name, schema: tbl.schema, columns: allCols.filter(c => c.schema === tbl.schema && c.table === tbl.name).map(c => Object.assign({}, c, { table: undefined, schema: undefined, length: c.length || undefined })) });
+          else cache.tables.push({ name: tbl.name, schema: tbl.schema, columns: allCols.filter(c => c.schema === tbl.schema && c.table === tbl.name).map(c => Object.assign({}, c, { table: undefined, schema: undefined, length: c.length || undefined, precision: c.precision || undefined })) });
         }
       } catch (e) {
         console.error(`Error generating schema cache:`, e);

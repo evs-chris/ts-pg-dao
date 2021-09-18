@@ -119,7 +119,7 @@ commands.push(cli.command('cache')
               const allCols = (await client.query(columnQuery)).rows;
               const ts = (await client.query(tableQuery)).rows;
               for (const t of ts) {
-                const cols: ColumnSchema[] = allCols.filter(c => c.schema === t.schema && c.table === t.name).map(c => Object.assign({}, c, { table: undefined, schema: undefined, length: c.length || undefined }));
+                const cols: ColumnSchema[] = allCols.filter(c => c.schema === t.schema && c.table === t.name).map(c => Object.assign({}, c, { table: undefined, schema: undefined, length: c.length || undefined, precision: c.precision || undefined }));
                 for (const col of cols) {
                   if (!Types[col.type]) { // check for enums
                     try {

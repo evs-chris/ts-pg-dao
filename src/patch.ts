@@ -1,6 +1,6 @@
 import * as fs from 'fs-extra';
 import * as pg from 'pg';
-import { SchemaConfig, tableQuery, columnQuery, SchemaCache } from './main';
+import { SchemaConfig, tableQuery, columnQuery, SchemaCache, ColumnSchema } from './main';
 
 export interface PatchOptions {
   details?: boolean;
@@ -17,6 +17,15 @@ export interface PatchConfig extends pg.ClientConfig, SchemaConfig {
 export interface PatchResult {
   tables: { [name: string]: string[] };
   statements: string[];
+}
+
+function createColumn(c: ColumnSchema): string {
+  let sql = `"${c.name}" `;
+  if (c.pkey && c.default && ~c.default.indexOf(`_${c.name}_seq`) && ~c.default.indexOf('nextval(')) {
+    if (c.type === 'int8') return `${sql} bigserial primary key`;
+    else if (c.type === 'int4') return `${sql} serial primary key`;
+  }
+  return `${sql} ${c.type}${c.precision ? `(${c.precision.join(', ')})` : ''}${c.length ? `(${c.length})` : ''}${c.nullable ? '' : ' not null'}${c.pkey ? ' primary key' : ''}${c.default ? ` default ${c.default}` : ''}`;
 }
 
 export async function patchConfig(config: PatchConfig, opts: PatchOptions = {}) {
@@ -44,14 +53,14 @@ export async function patchConfig(config: PatchConfig, opts: PatchOptions = {}) 
       for (const tbl of (await client.query(tableQuery)).rows) {
         if (config.schemaInclude && !config.schemaInclude.includes(tbl.name)) continue;
         else if (config.schemaExclude && config.schemaExclude.includes(tbl.name)) continue;
-        else schema.tables.push({ name: tbl.name, schema: tbl.schema, columns: allCols.filter(c => c.schema === tbl.schema && c.table === tbl.name).map(c => Object.assign({}, c, { table: undefined, schema: undefined, length: c.length || undefined })) });
+        else schema.tables.push({ name: tbl.name, schema: tbl.schema, columns: allCols.filter(c => c.schema === tbl.schema && c.table === tbl.name).map(c => Object.assign({}, c, { table: undefined, schema: undefined, length: c.length || undefined, precision: c.precision || undefined })) });
       }
 
       for (const ct of cache.tables) {
         if (opts.tables && !opts.tables.includes(ct.name)) continue;
         const t = schema.tables.find(e => e.name === ct.name && e.schema === ct.schema);
         if (!t) {
-          const q = `create table "${ct.name}" (${ct.columns.map(c => `"${c.name}" ${c.type}${c.nullable ? '' : ' not null'}${c.pkey ? ' primary key' : ''}${c.default ? ` default ${c.default}` : ''}`).join(', ')});`;
+          const q = `create table "${ct.name}" (${ct.columns.map(createColumn).join(', ')});`;
           qs.push(q);
           res.tables[ct.name] = [q];
         } else {
