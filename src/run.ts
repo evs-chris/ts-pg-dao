@@ -200,7 +200,7 @@ export default class ${model.name} {
 
   if (hasPkey) {
     tpl += `
-  static async save(con: dao.Connection, model: ${model.name}): Promise<void> {
+  static async save(con: dao.Connection, model: ${model.name}): Promise<${model.name}> {
     if (!model) throw new Error('Model is required');${model.hooks.beforesave ? `
     ${model.name}.beforesave(model);` : ''}
     ${model.fields.filter(f => ~dates.indexOf(f.pgtype)).map(f => `if (typeof model.${f.name} === 'string') model.${f.name} = new Date(model.${f.name});
@@ -225,6 +225,8 @@ export default class ${model.name} {
       model.${loadFlag} = false;` : ''}${changeFlag ? `
       model.${changeFlag} = false;` : ''}
     }
+
+    return model;
   }
 
   static async delete(con: dao.Connection, model: ${model.name}): Promise<void> {
@@ -262,13 +264,14 @@ export default class ${model.name} {
   }`;
   } else {
     tpl += `
-  static async insert(con: dao.Connection, model: ${model.name}): Promise<void> {
+  static async insert(con: dao.Connection, model: ${model.name}): Promise<${model.name}> {
     if (!model) throw new Error('Model is required');${model.hooks.beforesave ? `
     ${model.name}.beforesave(model);
     ` : ''}${model.fields.filter(f => ~dates.indexOf(f.pgtype)).map(f => `if (typeof model.${f.name} === 'string') model.${f.name} = new Date(model.${f.name});
     `).join('')}
     ${insertMembers(model, '    ')}${loadFlag ? `
     model.${loadFlag} = false;` : ''}
+    return model;
   }
   `
   }
