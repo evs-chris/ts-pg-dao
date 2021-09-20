@@ -357,6 +357,10 @@ function clientModel(config: Config, model: ProcessModel): string {
   if (model.codeMap.clientInner) tpl += `\n\n${reindent(model.codeMap.clientInner, '  ')}\n`;
   if (model.codeMap.bothInner) tpl += `\n\n${reindent(model.codeMap.bothInner, '  ')}\n`;
 
+  tpl += `
+  static lengths = { ${model.cols.filter(c => c.length).map(c => `${c.alias || c.name}: ${c.length}`).join(', ')} };
+  static precisions = { ${model.cols.filter(c => c.precision).map(c => `${c.alias || c.name}: ${JSON.stringify(c.precision)}`).join(', ')} }\n`;
+
   tpl += `}`;
 
   if (model.codeMap.clientOuter) tpl += `\n\n${model.codeMap.clientOuter}\n`;

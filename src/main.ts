@@ -362,6 +362,7 @@ export interface Column {
   enum?: string[];
   trim?: boolean;
   length?: number;
+  precision?: [number, number];
 }
 
 export type TSType = 'Date' | 'number' | 'string' | 'any' | 'boolean' | 'Date[]' | 'number[]' | 'string[]' | 'any[]' | 'boolean[]' | 'any' | 'any[]';
@@ -493,7 +494,7 @@ export class Builder {
 
     const columns = cols.map((r: ColumnSchema) => {
       const col: Column = {
-        name: r.name, nullable: r.nullable, pkey: r.pkey, pgtype: r.type, type: r.type[0] === '_' ? 'any[]' : 'any', elidable: false, length: r.length
+        name: r.name, nullable: r.nullable, pkey: r.pkey, pgtype: r.type, type: r.type[0] === '_' ? 'any[]' : 'any', elidable: false, length: r.length, precision: r.precision
       }
       if (~col.type.toLowerCase().indexOf('json')) col.json = true;
       if (col.type[0] === '_') col.array = true;
