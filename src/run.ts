@@ -203,7 +203,7 @@ export default class ${model.name} {
   static async save(con: dao.Connection, model: ${model.name}): Promise<${model.name}> {
     if (!model) throw new Error('Model is required');${model.hooks.beforesave ? `
     ${model.name}.beforesave(model);` : ''}
-    ${model.fields.filter(f => ~dates.indexOf(f.pgtype)).map(f => `if (typeof model.${f.name} === 'string') model.${f.name} = new Date(model.${f.name});
+    ${model.fields.filter(f => ~dates.indexOf(f.cast || f.pgtype)).map(f => `if (typeof model.${f.name} === 'string') model.${f.name} = new Date(model.${f.name});
     `).join('')}
 
     if (${model.fields.filter(f => f.pkey || f.optlock).map(f => `model.${f.name} !== undefined`).join(' && ')}) {${updateMembers(model, '      ')}
@@ -232,7 +232,7 @@ export default class ${model.name} {
   static async delete(con: dao.Connection, model: ${model.name}): Promise<void> {
     if (!model) throw new Error('Model is required');${model.hooks.beforedelete ? `
     ${model.name}.beforeDelete(model);` : ''}
-    ${model.fields.filter(f => ~dates.indexOf(f.pgtype)).map(f => `if (typeof model.${f.name} === 'string') model.${f.name} = new Date(model.${f.name});
+    ${model.fields.filter(f => ~dates.indexOf(f.cast || f.pgtype)).map(f => `if (typeof model.${f.name} === 'string') model.${f.name} = new Date(model.${f.name});
     `).join('')}
     const transact = !con.inTransaction;
     if (transact) await con.begin();
@@ -267,7 +267,7 @@ export default class ${model.name} {
   static async insert(con: dao.Connection, model: ${model.name}): Promise<${model.name}> {
     if (!model) throw new Error('Model is required');${model.hooks.beforesave ? `
     ${model.name}.beforesave(model);
-    ` : ''}${model.fields.filter(f => ~dates.indexOf(f.pgtype)).map(f => `if (typeof model.${f.name} === 'string') model.${f.name} = new Date(model.${f.name});
+    ` : ''}${model.fields.filter(f => ~dates.indexOf(f.cast || f.pgtype)).map(f => `if (typeof model.${f.name} === 'string') model.${f.name} = new Date(model.${f.name});
     `).join('')}
     ${insertMembers(model, '    ')}${loadFlag ? `
     model.${loadFlag} = false;` : ''}
@@ -300,7 +300,7 @@ export default class ${model.name} {
 
   for (const f of model.cols) {
     tpl += `    if (\`\${prefix}${f.name}\` in row) model.${f.alias || f.name} = row[\`\${prefix}${f.name}\`];\n`
-    if (f.pgtype === 'date') tpl += `    if (model.${f.alias || f.name} instanceof Date) model.${f.alias || f.name} = model.${f.alias || f.name}.toISOString().substr(0, 10) + 'T00:00';\n`;
+    if (f.cast === 'date' || f.pgtype === 'date') tpl += `    if (model.${f.alias || f.name} instanceof Date) { const d = model.${f.alias || f.name}; model.${f.alias || f.name} = \`\${d.getFullYear()}-\${d.getMonth() < 9 ? '0' : ''}\${(d.getMonth() + 1 + '')}-\${d.getDate() < 10 ? '0' : ''}\${(d.getDate())}T00:00\`; }\n`;
     if (f.trim) tpl += `    if (typeof model.${f.alias || f.name} === 'string') model.${f.alias || f.name} = model.${f.alias || f.name}.trim();\n`
   }
     
@@ -319,6 +319,8 @@ export default class ${model.name} {
   }
   tpl += `
   }`;
+
+  tpl += stripDates(model);
 
   tpl += `${model.serverBody}\n`;
 
@@ -361,12 +363,23 @@ function clientModel(config: Config, model: ProcessModel): string {
   static lengths = { ${model.cols.filter(c => c.length).map(c => `${c.alias || c.name}: ${c.length}`).join(', ')} };
   static precisions = { ${model.cols.filter(c => c.precision).map(c => `${c.alias || c.name}: ${JSON.stringify(c.precision)}`).join(', ')} }\n`;
 
+  tpl += stripDates(model);
+
   tpl += `}`;
 
   if (model.codeMap.clientOuter) tpl += `\n\n${model.codeMap.clientOuter}\n`;
   if (model.codeMap.bothOuter) tpl += `\n\n${model.codeMap.bothOuter}\n`;
 
   return tpl;
+}
+
+function stripDates(model: ProcessModel): string {
+  return `
+  /** Stringify dates so that they persist as entered without possible skew by timezone. */
+  static stripDates(model: ${model.name}) {${model.cols.filter(c => (c.cast || c.pgtype) === 'date').map(c => `
+    if ((model.${c.alias || c.name} as any) instanceof Date) { const d = model.${c.alias || c.name} as any as Date; model.${c.alias || c.name} = \`\${d.getFullYear()}-\${d.getMonth() < 9 ? '0' : ''}\${d.getMonth() + 1}-\${d.getDate() < 10 ? '0' : ''}\${d.getDate()}\` as any; }`).join('')}
+  }
+  `;
 }
 
 function modelProps(config: Config, model: Model, client: boolean = false): string {
@@ -570,7 +583,7 @@ function processQuery(config: Config, start: Query, model: ProcessModel): Proces
       }
 
       if (col === '*') {
-        return (entry.cols || entry.model.cols).map(c => `${alias}.${c.name} AS ${entry.prefix}${c.name}`).join(', ');
+        return (entry.cols || entry.model.cols).map(c => `${alias}.${c.name}${c.cast ? `::${c.cast}` : ''} AS ${entry.prefix}${c.name}`).join(', ');
       } else {
         const c = mdl.fields.find(f => col === f.name);
         if (!c) throw new Error(`Could not find field for ${alias}.${col} referenced in query ${query.name}.`);
@@ -578,7 +591,7 @@ function processQuery(config: Config, start: Query, model: ProcessModel): Proces
         if (~m.indexOf(':')) {
           return `${entry.prefix}${c.name}`;
         } else {
-          return `${alias}.${c.name} AS ${entry.prefix}${c.name}`;
+          return `${alias}.${c.name}${c.cast ? `::${c.cast}` : ''} AS ${entry.prefix}${c.name}`;
         }
       }
     });

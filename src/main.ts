@@ -121,8 +121,8 @@ export class Model {
 
   select(alias: string = ''): string {
     return this.cols.map(c => {
-      if (alias) return `"${alias}"."${c.name}" "${alias}__${c.name}"`;
-      else return `"${c.name}"`;
+      if (alias) return `"${alias}"."${c.name}"${c.cast ? `::${c.cast}` : ''} "${alias}__${c.name}"`;
+      else return `"${c.name}"${c.cast ? `::${c.cast}` : ''}`;
     }).join(', ');
   }
 
@@ -500,7 +500,7 @@ export class Builder {
       if (col.type[0] === '_') col.array = true;
       if (r.default != null) col.pgdefault = r.default;
       if (col.nullable || col.pgdefault) col.elidable = true;
-      col.type = Types[col.pgtype] || col.type;
+      col.type = Types[col.cast || col.pgtype] || col.type;
 
       if (r.enum) {
         col.enum = r.enum;
