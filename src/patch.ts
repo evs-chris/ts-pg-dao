@@ -28,6 +28,10 @@ function createColumn(c: ColumnSchema): string {
   return `${sql} ${c.type}${c.precision ? `(${c.precision.join(', ')})` : ''}${c.length ? `(${c.length})` : ''}${c.nullable ? '' : ' not null'}${c.pkey ? ' primary key' : ''}${c.default ? ` default ${c.default}` : ''}`;
 }
 
+function colType(c: ColumnSchema) {
+  return `${c.type}${c.precision ? `(${c.precision.join(', ')})` : ''}${c.length ? `(${c.length})` : ''}`;
+}
+
 export async function patchConfig(config: PatchConfig, opts: PatchOptions = {}) {
   const connect = opts.connect || config;
   const log = opts.log || console.error;
@@ -70,10 +74,10 @@ export async function patchConfig(config: PatchConfig, opts: PatchOptions = {}) 
               const q = `alter table "${ct.name}" add column "${col.name}" ${col.type}${col.nullable ? '' : ' not null'}${col.default ? ` default ${col.default}` : ''};`;
               qs.push(q);
               (res.tables[ct.name] || (res.tables[ct.name] = [])).push(q);
-            } else if (opts.details && (c.default !== col.default || c.nullable !== col.nullable || c.type !== col.type)) {
+            } else if (opts.details && (c.default !== col.default || c.nullable !== col.nullable || c.type !== col.type || c.length !== col.length || JSON.stringify(c.precision || []) !== JSON.stringify(col.precision || []))) {
               const t = res.tables[ct.name] || (res.tables[ct.name] = []);
-              if (c.type !== col.type) {
-                const q = `alter table "${ct.name}" alter column "${col.name}" type ${col.type};`;
+              if (c.type !== col.type || c.length !== col.length || JSON.stringify(c.precision || []) !== JSON.stringify(col.precision || [])) {
+                const q = `alter table "${ct.name}" alter column "${col.name}" type ${colType(col)};`;
                 qs.push(q);
                 t.push(q);
               }
