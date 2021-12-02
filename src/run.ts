@@ -300,7 +300,7 @@ export default class ${model.name} {
 
   for (const f of model.cols) {
     tpl += `    if (\`\${prefix}${f.name}\` in row) model.${f.alias || f.name} = row[\`\${prefix}${f.name}\`];\n`
-    if (f.cast === 'date' || f.pgtype === 'date') tpl += `    if (model.${f.alias || f.name} instanceof Date) { const d = model.${f.alias || f.name}; model.${f.alias || f.name} = \`\${d.getFullYear()}-\${d.getMonth() < 9 ? '0' : ''}\${(d.getMonth() + 1 + '')}-\${d.getDate() < 10 ? '0' : ''}\${(d.getDate())}T00:00\`; }\n`;
+    if (f.cast === 'date' || f.pgtype === 'date') tpl += `    if (model.${f.alias || f.name} instanceof Date) { const d = model.${f.alias || f.name}; model.${f.alias || f.name} = \`\${('' + d.getFullYear()).padStart(4, '0')}-\${d.getMonth() < 9 ? '0' : ''}\${(d.getMonth() + 1 + '')}-\${d.getDate() < 10 ? '0' : ''}\${(d.getDate())}T00:00\`; }\n`;
     if (f.trim) tpl += `    if (typeof model.${f.alias || f.name} === 'string') model.${f.alias || f.name} = model.${f.alias || f.name}.trim();\n`
   }
     
@@ -377,7 +377,7 @@ function stripDates(model: ProcessModel): string {
   return `
   /** Stringify dates so that they persist as entered without possible skew by timezone. */
   static stripDates(model: ${model.name}) {${model.cols.filter(c => (c.cast || c.pgtype) === 'date').map(c => `
-    if ((model.${c.alias || c.name} as any) instanceof Date) { const d = model.${c.alias || c.name} as any as Date; model.${c.alias || c.name} = \`\${d.getFullYear()}-\${d.getMonth() < 9 ? '0' : ''}\${d.getMonth() + 1}-\${d.getDate() < 10 ? '0' : ''}\${d.getDate()}\` as any; }`).join('')}
+    if ((model.${c.alias || c.name} as any) instanceof Date) { const d = model.${c.alias || c.name} as any as Date; model.${c.alias || c.name} = \`\${('' + d.getFullYear()).padStart(4, '0')}-\${d.getMonth() < 9 ? '0' : ''}\${d.getMonth() + 1}-\${d.getDate() < 10 ? '0' : ''}\${d.getDate()}\` as any; }`).join('')}
   }
   `;
 }
