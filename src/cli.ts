@@ -5,7 +5,7 @@ import * as rl from 'readline';
 import * as fs from 'fs-extra';
 import * as pg from 'pg';
 import { config, write, ConfigOpts } from './run';
-import { BuildConfig, tableQuery, columnQuery, ColumnSchema, commentQuery, enumQuery, SchemaCache, Types } from './main';
+import { BuildConfig, tableQuery, columnQuery, ColumnSchema, commentQuery, enumQuery, SchemaCache, Types, functionQuery } from './main';
 import { PatchOptions, patchConfig } from './patch';
 
 const pkg = require(path.join(__dirname, '../package.json'));
@@ -47,12 +47,44 @@ commands.push(cli.command('build')
     }
   }));
 
+export async function readSchema(connect: pg.ClientConfig) {
+  const res: SchemaCache = { tables: [], functions: [] };
+  try {
+    const client = new pg.Client(connect);
+    await client.connect();
+    try {
+      const allCols = (await client.query(columnQuery)).rows;
+      const ts = (await client.query(tableQuery)).rows;
+      for (const t of ts) {
+        const cols: ColumnSchema[] = allCols.filter(c => c.schema === t.schema && c.table === t.name).map(c => Object.assign({}, c, { table: undefined, schema: undefined, length: c.length || undefined, precision: c.precision || undefined }));
+        for (const col of cols) {
+          if (!Types[col.type]) { // check for enums
+            try {
+              col.enum = (await client.query(enumQuery(col.type))).rows[0].values;
+            } catch {}
+          }
+        }
+        res.tables.push({ name: t.name, schema: t.schema, columns: cols });
+      }
+      res.functions = (await client.query(functionQuery)).rows;
+    } finally {
+      await client.end();
+    }
+  } catch (e) {
+    console.error(`Failed to read schema`, e);
+  }
+
+  return res;
+}
+
 commands.push(cli.command('cache')
   .description('Manage cached schema')
   .option('-n, --name <name>', 'Use only the named config')
   .option('-t, --tables <list>', 'Only target the named table(s)', str => str.split(','))
+  .option('-f, --functions <list>', 'Only target the named function(s)', str => str.split(','))
   .option('-u, --update', 'Update schema cache from the database')
   .option('-l, --list', 'List all the entries in the cache')
+  .option('-q, --query', 'List all the entries in the database')
   .option('-m, --columns', 'List columns for entries in the cache')
   .option('-r, --remove', 'Remove the targeted entries from the cache')
   .option('-H, --host <host>', 'Override the target connection host for the named config.')
@@ -71,7 +103,7 @@ commands.push(cli.command('cache')
       if (cmd.name && config.name !== cmd.name) continue;
       if (!config.schemaCacheFile) continue;
 
-      if (cmd.list) console.log(`\n\n ${config.name} \n==============================`);
+      if (cmd.list || cmd.query) console.log(`\n\n ${config.name} \n==============================`);
 
       const cache: SchemaCache = JSON.parse(await fs.readFile(config.schemaCacheFile, 'utf8'));
       const connect: pg.ClientConfig = Object.assign({}, config);
@@ -90,54 +122,44 @@ commands.push(cli.command('cache')
         }
       }
 
-      if (cmd.list) {
-        const tables = cmd.tables ? cache.tables.filter(t => cmd.tables.includes(t.name)) : cache.tables;
+      if (cmd.list || cmd.query) {
+        const schema = cmd.list ? { tables: cache.tables, functions: cache.functions } : await readSchema(connect);
+        const tables = cmd.tables ? schema.tables.filter(t => cmd.tables.includes(t.name)) : schema.tables;
+        if (tables.length) console.log(` Tables \n------------------------------`);
         for (const table of tables) {
-          if (cmd.list) {
-            console.log(`"${table.schema}"."${table.name}"`);
-            if (cmd.columns) console.log(`    ${table.columns.map(c => `${c.name}:${c.type}`).join(', ')}`);
-          }
+          console.log(`"${table.schema}"."${table.name}"`);
+          if (cmd.columns) console.log(`    ${table.columns.map(c => `${c.name}:${c.type}`).join(', ')}`);
+        }
+        const funcs = cmd.functions ? (schema.functions || []).filter(f => cmd.functions.includes(f.name)) : (schema.functions || []);
+        if (funcs.length) console.log(`${tables.length ? '\n' : ''} Functions \n------------------------------`);
+        for (const func of funcs) {
+          console.log(`"${func.schema}"."${func.name}"(${func.args}): ${func.result}`);
         }
       }
 
       if (cmd.remove) {
-        cache.tables = cache.tables.filter(t => {
-          const found = cmd.tables.includes(t.name);
-          if (found) console.log(`Removing "${t.schema}"."${t.name}"...`);
-          return !found;
-        });
+        if (cmd.tables) {
+          cache.tables = cache.tables.filter(t => {
+            const found = cmd.tables.includes(t.name);
+            if (found) console.log(`Removing "${t.schema}"."${t.name}"...`);
+            return !found;
+          });
+        }
+
+        if (cmd.functions) {
+          cache.functions = (cache.functions || []).filter(f => {
+            const found = cmd.functions.includes(f.name);
+            if (found) console.log(`Removing "${f.schema}"."${f.name}"(${f.args}): ${f.result}...`);
+              return !found;
+          });
+        }
       }
 
       if (cmd.update) {
+        if (!cache.functions) cache.functions = [];
         const tables = cmd.tables ? cache.tables.filter(t => cmd.tables.includes(t.name)) : cache.tables;
-        const schema = await (async () => {
-          const res: SchemaCache = { tables: [] };
-          try {
-            const client = new pg.Client(connect);
-            await client.connect();
-            try {
-              const allCols = (await client.query(columnQuery)).rows;
-              const ts = (await client.query(tableQuery)).rows;
-              for (const t of ts) {
-                const cols: ColumnSchema[] = allCols.filter(c => c.schema === t.schema && c.table === t.name).map(c => Object.assign({}, c, { table: undefined, schema: undefined, length: c.length || undefined, precision: c.precision || undefined }));
-                for (const col of cols) {
-                  if (!Types[col.type]) { // check for enums
-                    try {
-                      col.enum = (await client.query(enumQuery(col.type))).rows[0].values;
-                    } catch {}
-                  }
-                }
-                res.tables.push({ name: t.name, schema: t.schema, columns: cols });
-              }
-            } finally {
-              await client.end();
-            }
-          } catch (e) {
-            console.error(`Failed to read schema`, e);
-          }
-
-          return res;
-        })();
+        const functions = cmd.functions ? cache.functions.filter(f => cmd.functions.includes(f.name)) : cache.functions;
+        const schema = await readSchema(connect);
 
         // update current tables
         for (const table of tables) {
@@ -146,6 +168,15 @@ commands.push(cli.command('cache')
             cache.tables[cache.tables.indexOf(table)] = t;
             console.log(`Updating "${table.schema}"."${table.name}"...`);
           } else console.log(`"${table.schema}"."${table.name}" not found in target database`);
+        }
+
+        // update current functions
+        for (const func of functions) {
+          const f = schema.functions.find(f => f.name === func.name && f.args === func.args && f.result === func.result);
+          if (f) {
+            cache.functions[cache.functions.indexOf(func)] = f;
+            console.log(`Updating "${func.schema}"."${func.name}"(${func.args}): ${func.result}...`);
+          } else console.log(`"${func.schema}"."${func.name}"(${func.args}): ${func.result} not found in target database`);
         }
 
         // look for new tables
@@ -159,6 +190,18 @@ commands.push(cli.command('cache')
           }
         }
 
+        if (cmd.functions) {
+          for (const n of cmd.functions) {
+            const funcs = schema.functions.filter(f => f.name === n);
+            for (const fn of funcs) {
+              if (!cache.functions.find(f => f.schema === fn.schema && f.name === fn.name && f.args === fn.args && f.result === fn.result)) {
+                console.log(`Adding "${fn.schema}"."${fn.name}"(${fn.args}): ${fn.result}...`);
+                cache.functions.push(fn);
+              }
+            }
+          }
+        }
+
         // check for *
         if (cmd.tables && cmd.tables.length === 1 && cmd.tables[0] === '*') {
           for (const t of schema.tables) {
@@ -168,11 +211,25 @@ commands.push(cli.command('cache')
             }
           }
         }
+
+        if (cmd.functions && cmd.functions.length === 1 && cmd.functions[0] === '*') {
+          for (const fn of schema.functions || []) {
+            if (!cache.functions.find(f => f.schema === fn.schema && f.name === fn.name && f.args === fn.args && f.result === fn.result)) {
+              console.log(`Adding "${fn.schema}"."${fn.name}"(${fn.args}): ${fn.result}...`);
+              cache.functions.push(fn);
+            }
+          }
+        }
       }
 
       if (cmd.update || cmd.remove) {
         cache.tables.sort((l, r) => l.name < r.name ? -1 : l.name > r.name ? 1 : 0);
         cache.tables.forEach(t => t.columns.sort((l, r) => l.name < r.name ? -1 : l.name > r.name ? 1 : 0));
+        cache.functions.sort((l, r) => {
+          const a = `"${l.schema}"."${l.name}"(${l.args}): ${l.result}`;
+          const b = `"${r.schema}"."${r.name}"(${r.args}): ${r.result}`;
+          return a < b ? -1 : a > b ? 1 : 0;
+        });
         await fs.writeFile(config.schemaCacheFile, JSON.stringify(cache, null, ' '), 'utf8');
         console.log(`Wrote ${config.schemaCacheFile}`);
       }
@@ -185,6 +242,7 @@ commands.push(cli.command('patch')
   .option('-l, --details', 'Update columns to match type and default')
   .option('-n, --name <name>', 'Only use the named config')
   .option('-t, --tables <list>', 'Only target the named table(s)', str => str.split(','))
+  .option('-f, --functions <list>', 'Only target the named function(s)', str => str.split(','))
   .option('-H, --host <host>', 'Override the target connection host for the named config.')
   .option('-U, --user <user>', 'Override the target connection user for the named config.')
   .option('-W, --password [password]', 'Read the target password from the stdin for the named config.')
@@ -217,6 +275,7 @@ commands.push(cli.command('patch')
             opts.connect.password = cmd.password;
           }
           if (cmd.tables) opts.tables = cmd.tables;
+          if (cmd.functions) opts.functions = cmd.functions;
         }
         await patchConfig(config.config, opts);
       } else {

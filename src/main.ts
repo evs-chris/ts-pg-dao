@@ -315,6 +315,17 @@ export const tableQuery = `select table_name as name, table_schema as schema fro
 export const columnQuery = `select ts.table_schema as schema, ts.table_name as table, cs.column_name as name, cs.is_nullable = 'YES' as nullable, (select keys.constraint_name from information_schema.key_column_usage keys join information_schema.table_constraints tc on keys.constraint_name = tc.constraint_name and keys.constraint_schema = tc.constraint_schema and tc.table_name = keys.table_name where keys.table_schema = cs.table_schema and keys.table_name = cs.table_name and keys.column_name = cs.column_name and tc.constraint_type = 'PRIMARY KEY') is not null as pkey, cs.udt_name as type, cs.column_default as default, cs.character_maximum_length as length, case when cs.udt_name = 'numeric' and cs.numeric_precision > 0 and cs.numeric_scale > 0 then json_build_array(cs.numeric_precision, cs.numeric_scale) else null end as precision from information_schema.columns cs join information_schema.tables ts on ts.table_name = cs.table_name and ts.table_schema = cs.table_schema where ts.table_schema <> 'pg_catalog' and ts.table_schema <> 'information_schema' order by cs.column_name asc;`;
 export const commentQuery =  `select shobj_description((select oid from pg_database where datname = $1), 'pg_database') as comment;`;
 export const enumQuery = (type: string) => `select enum_range(null::${type})::varchar[] as values;`;
+export const functionQuery = `SELECT n.nspname as "schema",
+  p.proname as "name",
+  pg_catalog.pg_get_function_result(p.oid) as "result",
+  pg_catalog.pg_get_function_arguments(p.oid) as "args",
+  pg_catalog.pg_get_functiondef(p.oid) as "def"
+FROM pg_catalog.pg_proc p
+  LEFT JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+WHERE pg_catalog.pg_function_is_visible(p.oid)
+  AND n.nspname <> 'pg_catalog'
+  AND n.nspname <> 'information_schema'
+ORDER BY 1, 2, 4;`;
 
 export function config(config: BuilderConfig, fn: (builder: Builder) => Promise<Config>): BuildConfig {
   const builder = new PrivateBuilder(config);
@@ -427,8 +438,16 @@ export interface ColumnSchema {
   schema?: string;
   table?: string;
 }
+export interface FunctionSchema {
+  schema: string;
+  name: string;
+  result: string;
+  args: string;
+  def: string;
+}
 export interface SchemaCache {
   tables: TableSchema[];
+  functions?: FunctionSchema[];
 }
 
 export const BuilderOptions = {

@@ -1,11 +1,12 @@
 import * as fs from 'fs-extra';
 import * as pg from 'pg';
-import { SchemaConfig, tableQuery, columnQuery, SchemaCache, ColumnSchema } from './main';
+import { SchemaConfig, tableQuery, columnQuery, SchemaCache, ColumnSchema, FunctionSchema, functionQuery } from './main';
 
 export interface PatchOptions {
   details?: boolean;
   commit?: boolean;
   tables?: string[];
+  functions?: string[];
   connect?: pg.ClientConfig & { schemaCacheFile?: string };
   log?: (msg: string) => void;
 }
@@ -16,6 +17,7 @@ export interface PatchConfig extends pg.ClientConfig, SchemaConfig {
 
 export interface PatchResult {
   tables: { [name: string]: string[] };
+  functions: { [name: string]: string };
   statements: string[];
 }
 
@@ -37,6 +39,7 @@ export async function patchConfig(config: PatchConfig, opts: PatchOptions = {}) 
   const log = opts.log || console.error;
   const res: PatchResult = {
     tables: {},
+    functions: {},
     statements: [],
   };
 
@@ -46,6 +49,7 @@ export async function patchConfig(config: PatchConfig, opts: PatchOptions = {}) 
     await client.connect();
     const cache: SchemaCache = JSON.parse(await fs.readFile(connect.schemaCacheFile, { encoding: 'utf8' }));
     const schema: SchemaCache = { tables: [] };
+    if (!cache.functions) cache.functions = [];
 
     const name = config.name ? `${config.name} (${connect.user || process.env.USER}@${connect.host || 'localhost'}:${connect.port || 5432}/${connect.database || process.env.USER})` : `${connect.user || process.env.USER}@${connect.host || 'localhost'}:${connect.port || 5432}/${connect.database || process.env.USER})`;
 
@@ -59,6 +63,8 @@ export async function patchConfig(config: PatchConfig, opts: PatchOptions = {}) 
         else if (config.schemaExclude && config.schemaExclude.includes(tbl.name)) continue;
         else schema.tables.push({ name: tbl.name, schema: tbl.schema, columns: allCols.filter(c => c.schema === tbl.schema && c.table === tbl.name).map(c => Object.assign({}, c, { table: undefined, schema: undefined, length: c.length || undefined, precision: c.precision || undefined })) });
       }
+
+      schema.functions = (await client.query(functionQuery)).rows;
 
       for (const ct of cache.tables) {
         if (opts.tables && !opts.tables.includes(ct.name)) continue;
@@ -93,6 +99,15 @@ export async function patchConfig(config: PatchConfig, opts: PatchOptions = {}) 
               }
             }
           }
+        }
+      }
+
+      for (const cf of cache.functions) {
+        if (opts.functions && !opts.functions.includes(cf.name)) continue;
+        const f = schema.functions.find(e => e.schema === cf.schema && e.name === cf.name && e.args === cf.args && e.result === cf.result);
+        if (!f || f.def !== cf.def) {
+          qs.push(cf.def);
+          res.functions[`${cf.name}(${cf.args}): ${cf.result}`] = cf.def;
         }
       }
 
