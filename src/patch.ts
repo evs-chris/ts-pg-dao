@@ -128,3 +128,51 @@ export async function patchConfig(config: PatchConfig, opts: PatchOptions = {}) 
   return res;
 }
 
+export const depsQuery = `select obj_schema "schema", obj_name "name", obj_type "type" from
+  (
+    with recursive recursive_deps(obj_schema, obj_name, obj_type, depth) as
+    (
+      select $1::varchar collate "C", $2::varchar collate "C", null::varchar collate "C", 0
+      union
+      select dep_schema::varchar collate "C", dep_name::varchar collate "C", dep_type::varchar collate "C",
+        recursive_deps.depth + 1 from
+      (
+        select ref_nsp.nspname ref_schema, ref_cl.relname ref_name,
+          rwr_cl.relkind dep_type, rwr_nsp.nspname dep_schema,
+          rwr_cl.relname dep_name
+        from pg_depend dep
+        join pg_class ref_cl on dep.refobjid = ref_cl.oid
+        join pg_namespace ref_nsp on ref_cl.relnamespace = ref_nsp.oid
+        join pg_rewrite rwr on dep.objid = rwr.oid
+        join pg_class rwr_cl on rwr.ev_class = rwr_cl.oid
+        join pg_namespace rwr_nsp on rwr_cl.relnamespace = rwr_nsp.oid
+        where dep.deptype = 'n'
+        and dep.classid = 'pg_rewrite'::regclass
+      ) deps
+      join recursive_deps on deps.ref_schema = recursive_deps.obj_schema
+        and deps.ref_name = recursive_deps.obj_name
+      where (deps.ref_schema != deps.dep_schema or deps.ref_name != deps.dep_name)
+    )
+    select obj_schema, obj_name, obj_type, depth
+    from recursive_deps
+    where depth > 0
+  ) t
+group by obj_schema, obj_name, obj_type
+order by max(depth) desc`;
+
+export async function calcDropRestore(connect: pg.Client, schema: string, table: string): Promise<{ drop: string[]; restore: string[] }> {
+  const deps: Array<{ schema: string; name: string; type: string }> = (await connect.query(depsQuery, [schema, table])).rows;
+
+  const drop: string[] = [];
+  const restore: string[] = [];
+
+  for (const d of deps) {
+    const comment = (await connect.query(`select obj_description((select c.oid from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = $1 and c.relname = $2 and relkind in ('v', 'm'))) as comment`, [d.schema, d.name])).rows[0].comment;
+    if (comment != null) restore.push(`COMMENT ON ${d.type === 'm' ? 'MATERIALIZED ' : ''}VIEW "${d.schema}"."${d.name}" IS $comment$${comment}$comment$;`);
+    restore.push(`CREATE ${d.type === 'm' ? 'MATERIALIZED ' : ''}VIEW "${d.schema}"."${d.name}" AS ${(await connect.query(`select pg_get_viewdef((select c.oid from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = $1 and c.relname = $2 and relkind in ('v', 'm'))) as def`, [d.schema, d.name])).rows[0].def}`);
+    drop.push(`DROP ${d.type === 'm' ? 'MATERIALIZED ' : ''}VIEW "${d.schema}"."${d.name}";`);
+  }
+
+  return { drop, restore: restore.reverse() };
+}
+
