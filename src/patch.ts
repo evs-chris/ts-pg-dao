@@ -77,7 +77,7 @@ export async function patchConfig(config: PatchConfig, opts: PatchOptions = {}) 
           for (const col of ct.columns) {
             const c = t.columns.find(e => e.name === col.name);
             if (!c) {
-              const q = `alter table "${ct.name}" add column "${col.name}" ${col.type}${col.nullable ? '' : ' not null'}${col.default ? ` default ${col.default}` : ''};`;
+              const q = `alter table "${ct.name}" add column "${col.name}" ${colType(col)}${col.nullable ? '' : ' not null'}${col.default ? ` default ${col.default}` : ''};`;
               qs.push(q);
               (res.tables[ct.name] || (res.tables[ct.name] = [])).push(q);
             } else if (opts.details && (c.default !== col.default || c.nullable !== col.nullable || c.type !== col.type || c.length !== col.length || JSON.stringify(c.precision || []) !== JSON.stringify(col.precision || []))) {
