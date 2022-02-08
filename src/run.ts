@@ -174,6 +174,9 @@ const dates = ['timestamp'];
 function serverModel(config: BuiltConfig, model: ProcessModel): string {
   let tpl = `import * as dao from '@evs-chris/ts-pg-dao/runtime';${model.extraImports && model.extraImports.length ? '\n' + model.extraImports.map(o => `import ${o} from './${o}';`).join('\n') + '\n' : ''}${model._imports.length ? '\n' + model._imports.join(';\n') + '\n' : ''}${model.serverOuter ? `\n${model.serverOuter}` : ''}
 export default class ${model.name} {
+  constructor(props?: Partial<${model.name}>) {
+    if (props) Object.assign(this, props);
+  }
   static get table() { return ${JSON.stringify(model.table)}; }
 `;
 
