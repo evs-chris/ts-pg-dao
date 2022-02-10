@@ -209,7 +209,7 @@ export default class ${model.name} {
     ${model.fields.filter(f => ~dates.indexOf(f.cast || f.pgtype)).map(f => `if (typeof model.${f.name} === 'string') model.${f.name} = new Date(model.${f.name});
     `).join('')}
 
-    if (${model.fields.filter(f => f.pkey || f.optlock).map(f => `model.${f.name} !== undefined`).join(' && ')}) {${updateMembers(model, '      ')}
+    if (${model.fields.filter(f => f.pkey || f.optlock).map(f => `model.${f.name} !== undefined`).join(' && ')}) {${updateMembers(config, model, '      ')}
 
       const transact = !con.inTransaction;
       if (transact) await con.begin();
@@ -241,7 +241,7 @@ export default class ${model.name} {
     if (transact) await con.begin();
     try {
       const params = [${model.fields.filter(f => f.pkey || f.optlock).map(f => `model.${f.name}`).join(', ')}];
-      const res = await con.query(\`delete from "${model.table}" where ${model.fields.filter(f => f.pkey || f.optlock).map((f, i) => `${f.optlock ? `$\{params[${i}] == null ? \`"${f.name}" is null\` : \`date_trunc('millisecond', "${f.name}")\`}` : `"${f.name}"`} = $${i + 1}`).join(' AND ')}\`, params);
+      const res = await con.query(\`delete from "${model.table}" where ${model.fields.filter(f => f.pkey || f.optlock).map((f, i) => `${f.optlock ? `$\{params[${i}] == null ? \`"${f.name}" is null\` : \`date_trunc('millisecond', "${f.name}"${model.cast(config, f)})\`}` : `"${f.name}"`} = $${i + 1}`).join(' AND ')}\`, params);
       if (res.rowCount < 1) throw new Error('No matching row to delete for ${model.name}');
       if (res.rowCount > 1) throw new Error('Too many matching rows deleted for ${model.name}');
       if (transact) await con.commit();
@@ -288,7 +288,7 @@ export default class ${model.name} {
   }
 
   static async findAll(con: dao.Connection, where: string = '', params: any[] = []): Promise<${model.name}[]> {
-    const res = await con.query('select ${model.select()} from "${model.table}"' + (where ? ' WHERE ' + where : ''), params);
+    const res = await con.query('select ${model.select(config)} from "${model.table}"' + (where ? ' WHERE ' + where : ''), params);
     return res.rows.map(r => ${model.name}.load(r, new ${model.name}()));
   }
 
@@ -385,13 +385,19 @@ function stripDates(model: ProcessModel): string {
   `;
 }
 
+function stringyDates(config: Config, type: string): string {
+  if (!config.stringyDates) return type;
+  if (type === 'Date') return 'Date|string'
+  if (type === 'Date[]') return 'Array<Date|string>';
+  return type;
+}
 function modelProps(config: Config, model: Model, client: boolean = false): string {
   let tpl = '';
 
   let col: Column;
   for (let c = 0; c < model.cols.length; c++) {
     col = model.cols[c];
-    tpl += `  ${col.alias || col.name}${col.nullable ? '?' : ''}: ${col.enum ? col.enum.map(v => `'${v}'`).join('|') : (col.retype || col.type)}${col.default ? ` = ${col.default}` : ''};\n`;
+    tpl += `  ${col.alias || col.name}${col.nullable ? '?' : ''}: ${col.enum ? col.enum.map(v => `'${v}'`).join('|') : stringyDates(config, col.retype || col.type)}${col.default ? ` = ${col.default}` : ''};\n`;
   }
 
   if (Object.keys(model._extras).length > 0) {
@@ -408,7 +414,7 @@ function colToParam(f) {
   return `${f.optlock ? 'new Date()' : f.type === 'any' ? `Array.isArray(model.${f.alias || f.name}) ? JSON.stringify(model.${f.alias || f.name}) : model.${f.alias || f.name}` : `model.${f.alias || f.name}`}`;
 }
 
-function updateMembers(model: Model, prefix: string): string {
+function updateMembers(config: Config, model: Model, prefix: string): string {
   let res = `\n${prefix}const params = [];\n${prefix}const sets = [];\n${prefix}let sql = 'UPDATE ${model.table} SET ';`;
   const lock = model.fields.find(f => f.optlock);
   if (lock) res += `\n${prefix}const lock = new Date()${lock.pgtype === 'date' ? `.toISOString().substr(0, 10)` : ''};`;
@@ -427,7 +433,7 @@ function updateMembers(model: Model, prefix: string): string {
   res += `\n${prefix}const count = params.length;`;
   const where = model.fields.filter(f => f.pkey || f.optlock);
   res += `\n${prefix}params.push(${where.map(f => `model.${f.alias || f.name}`).join(', ')});`;
-  res += `\n${prefix}sql += \` WHERE ${where.map((f, i) => `${f.optlock ? `date_trunc('millisecond', "${f.name}")` : `"${f.name}"`} = $\${count + ${i + 1}}`).join(' AND ')}\`;`
+  res += `\n${prefix}sql += \` WHERE ${where.map((f, i) => `${f.optlock ? `date_trunc('millisecond', "${f.name}"${model.cast(config, f)})` : `"${f.name}"`} = $\${count + ${i + 1}}`).join(' AND ')}\`;`
 
   return res;
 }
@@ -586,7 +592,7 @@ function processQuery(config: Config, start: Query, model: ProcessModel): Proces
       }
 
       if (col === '*') {
-        return (entry.cols || entry.model.cols).map(c => `${alias}.${c.name}${c.cast ? `::${c.cast}` : ''} AS ${entry.prefix}${c.name}`).join(', ');
+        return (entry.cols || entry.model.cols).map(c => `${alias}.${c.name}${mdl.cast(config, c)} AS ${entry.prefix}${c.name}`).join(', ');
       } else {
         const c = mdl.fields.find(f => col === f.name);
         if (!c) throw new Error(`Could not find field for ${alias}.${col} referenced in query ${query.name}.`);
@@ -594,7 +600,7 @@ function processQuery(config: Config, start: Query, model: ProcessModel): Proces
         if (~m.indexOf(':')) {
           return `${entry.prefix}${c.name}`;
         } else {
-          return `${alias}.${c.name}${c.cast ? `::${c.cast}` : ''} AS ${entry.prefix}${c.name}`;
+          return `${alias}.${c.name}${mdl.cast(config, c)} AS ${entry.prefix}${c.name}`;
         }
       }
     });

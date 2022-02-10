@@ -7,6 +7,8 @@ export interface Config {
   models: Model[];
   index?: boolean|string;
   name?: string;
+  stringyDates?: boolean;
+  tzTimestamps?: boolean;
 }
 
 export type BuiltConfig = Config & { pgconfig?: BuilderConfig };
@@ -119,11 +121,17 @@ export class Model {
     return q;
   }
 
-  select(alias: string = ''): string {
+  select(config: Config, alias: string = ''): string {
     return this.cols.map(c => {
-      if (alias) return `"${alias}"."${c.name}"${c.cast ? `::${c.cast}` : ''} "${alias}__${c.name}"`;
-      else return `"${c.name}"${c.cast ? `::${c.cast}` : ''}`;
+      if (alias) return `"${alias}"."${c.name}"${this.cast(config, c)} "${alias}__${c.name}"`;
+      else return `"${c.name}"${this.cast(config, c)}`;
     }).join(', ');
+  }
+
+  cast(config: Config, col: Column): string {
+    if (col.cast) return `::${col.cast}`;
+    if (config.tzTimestamps && col.pgtype === 'timestamp') return `::timestamptz`;
+    return '';
   }
 
   hook(name: keyof Hooks, fn: Hook): Model {
@@ -414,7 +422,7 @@ export const Types: { [key: string]: TSType } = {
   _numeric: 'string[]',
 }
 
-export type BuilderConfig = pg.ClientConfig & SchemaConfig & { name?: string; _cache: any };
+export type BuilderConfig = pg.ClientConfig & SchemaConfig & { name?: string; _cache?: any };
 export interface SchemaConfig {
   schemaCacheFile?: string;
   schemaInclude?: string[];
