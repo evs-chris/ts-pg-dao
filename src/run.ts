@@ -9,7 +9,7 @@ export interface ConfigOpts {
   forceCache?: boolean;
 }
 
-export async function config(file, opts: ConfigOpts = {}): Promise<BuildConfig|BuildConfig[]> {
+export async function config(file: string, opts: ConfigOpts = {}): Promise<BuildConfig|BuildConfig[]> {
   const input = await fs.readFile(file, { encoding: 'utf8' });
   const output = ts.transpileModule(input, {
     compilerOptions: {
@@ -391,7 +391,7 @@ function stringyDates(config: Config, type: string): string {
   if (type === 'Date[]') return 'Array<Date|string>';
   return type;
 }
-function modelProps(config: Config, model: Model, client: boolean = false): string {
+function modelProps(config: Config, model: Model, _client: boolean = false): string {
   let tpl = '';
 
   let col: Column;
@@ -410,7 +410,7 @@ function modelProps(config: Config, model: Model, client: boolean = false): stri
   return tpl;
 }
 
-function colToParam(f) {
+function colToParam(f: Column) {
   return `${f.optlock ? 'new Date()' : f.type === 'any' ? `Array.isArray(model.${f.alias || f.name}) ? JSON.stringify(model.${f.alias || f.name}) : model.${f.alias || f.name}` : `model.${f.alias || f.name}`}`;
 }
 
@@ -528,8 +528,8 @@ function processQuery(config: Config, start: Query, model: ProcessModel): Proces
   function mapParams(sql: string, ps: Param[], offset?: string): [string, QueryPartCheck] {
     let fn: QueryPartCheck = null;
 
-    const str = sql.replace(params, (str, name) => {
-      let p, i;
+    const str = sql.replace(params, (_str, name) => {
+      let p: Param, i: number;
       if (!query.params || !(p = query.params.find(p => p.name === name))) throw new Error(`Query ${query.owner.name}.${query.name} references parameter ${name} that is not defined.`);
       if (~(i = parms.indexOf(p))) return `$${i + 1}`;
       else if (~(i = ps.indexOf(p))) return offset ? `$\${${offset} + ${i + 1}}` : `$${i + 1}`;
@@ -542,7 +542,7 @@ function processQuery(config: Config, start: Query, model: ProcessModel): Proces
     if (offset) {
       fn = num => {
         let len = num;
-        const s = sql.replace(params, (str, name) => {
+        const s = sql.replace(params, (_str, name) => {
           let i: number;
           const p = query.params.find(p => p.name === name);
           if (~(i = parms.indexOf(p))) return `$${i + 1}`;
@@ -559,7 +559,7 @@ function processQuery(config: Config, start: Query, model: ProcessModel): Proces
   let sql = mapParams(query.sql, parms)[0];
 
   // map tables to models and record relevant aliases
-  sql = sql.replace(tableAliases, (m ,tbl, alias) => {
+  sql = sql.replace(tableAliases, (_m ,tbl, alias) => {
     const mdl = findModel(tbl, config);
     if (!mdl) throw new Error(`Could not find model for table ${tbl} referenced in query ${query.name}.`);
 
@@ -613,7 +613,7 @@ function processQuery(config: Config, start: Query, model: ProcessModel): Proces
   query.parts && Object.entries(query.parts).forEach(([condition, sql]) => {
     const ps: Param[] = [];
     const [str, check] = mapParams(mapFields(sql), ps, 'ps.length');
-    const cond = condition.replace(params, (str, name) => {
+    const cond = condition.replace(params, (_str, name) => {
       if (!start.params.find(p => p.name === name)) throw new Error(`Query ${query.owner.name}.${query.name} has an invalid part condition referencing unknown parameter $${name}.`);
       return `params.${name}`;
     });
@@ -652,7 +652,7 @@ function processQuery(config: Config, start: Query, model: ProcessModel): Proces
     method: `  static async ${query.name}(con: dao.Connection, params: { ${(query.params || []).map(p => `${p.name}${p.optional || p.default ? '?' : ''}: ${p.type || 'string'}`).join(', ')} }${defaulted ? ' = {}' : ''}): Promise<${query.result ? query.result : query.scalar ? loader.interface : query.owner.name}${query.singular ? '' : '[]'}> {
     let sql = __${query.name}_sql;
     const ps: any[] = [${getParamsValues(parms)}];
-    ${parts.map((p, i) => p.code).join('\n    ')}
+    ${parts.map((p, _i) => p.code).join('\n    ')}
     const query = await con.query(sql, ps);
     ${loader.loader}
   }`,
@@ -793,7 +793,7 @@ function combineParts(sql: string, params: number, parts: QueryPartCheck[]): str
   const res: string[] = [sql];
   for (let i = 0; i < parts.length; i++) {
     let num = params;
-    res.push(sql + parts.filter((p, j) => (i + 1) & (j + 1)).map(p => {
+    res.push(sql + parts.filter((_p, j) => (i + 1) & (j + 1)).map(p => {
       const [sql, count] = p(num);
       num += count;
       return sql;
