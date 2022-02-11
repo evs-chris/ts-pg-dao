@@ -224,7 +224,7 @@ export default class ${model.name} {
         throw e;
       }
       ${model.fields.find(f => f.optlock) ? `${model.fields.filter(f => f.optlock).map(f => `\n      model.${f.alias || f.name} = lock;`).join('')}` : ''}
-    } else {${insertMembers(model, '      ')}${loadFlag ? `
+    } else {${insertMembers(config, model, '      ')}${loadFlag ? `
       model.${loadFlag} = false;` : ''}${changeFlag ? `
       model.${changeFlag} = false;` : ''}
     }
@@ -272,7 +272,7 @@ export default class ${model.name} {
     ${model.name}.beforesave(model);
     ` : ''}${model.fields.filter(f => ~dates.indexOf(f.cast || f.pgtype)).map(f => `if (typeof model.${f.name} === 'string') model.${f.name} = new Date(model.${f.name});
     `).join('')}
-    ${insertMembers(model, '    ')}${loadFlag ? `
+    ${insertMembers(config, model, '    ')}${loadFlag ? `
     model.${loadFlag} = false;` : ''}
     return model;
   }
@@ -438,7 +438,7 @@ function updateMembers(config: Config, model: Model, prefix: string): string {
   return res;
 }
 
-function insertMembers(model: Model, prefix: string): string {
+function insertMembers(config: Config, model: Model, prefix: string): string {
   let res = `\n${prefix}const params = [];\n${prefix}const sets = [];\n${prefix}let sql = 'INSERT INTO ${model.table} ';`;
   for (const f of model.fields) {
     if (!f.optlock) {
@@ -449,7 +449,7 @@ function insertMembers(model: Model, prefix: string): string {
 
   const ret = model.fields.filter(f => f.pkey || f.optlock || (f.elidable && f.pgdefault));
   const locks = model.fields.filter(f => f.optlock);
-  res += `\n${prefix}sql += \`(\${sets.map(s => \`"\${s}"\`).join(', ')}\${${locks.length} && sets.length ? ', ' : ''}${locks.map(l => l.name).join(', ')}) VALUES (\${sets.map((n, i) => \`$\${i + 1}\`)}\${${locks.length} && sets.length ? ', ' : ''}${locks.map(l => 'now()').join(', ')})${ret.length ? ` RETURNING ${ret.map(f => `"${f.name}"`).join(', ')}` : ''};\`;`;
+  res += `\n${prefix}sql += \`(\${sets.map(s => \`"\${s}"\`).join(', ')}\${${locks.length} && sets.length ? ', ' : ''}${locks.map(l => l.name).join(', ')}) VALUES (\${sets.map((n, i) => \`$\${i + 1}\`)}\${${locks.length} && sets.length ? ', ' : ''}${locks.map(_l => 'now()').join(', ')})${ret.length ? ` RETURNING ${ret.map(f => `"${f.name}"${model.cast(config, f)}`).join(', ')}` : ''};\`;`;
   res += `\n\n${prefix}const res = (await con.query(sql, params)).rows[0];`
   res += ret.map(f => `\n${prefix}model.${f.alias || f.name} = res.${f.name};`).join('');
 
