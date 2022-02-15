@@ -471,7 +471,7 @@ export class Builder {
     this._config = config;
   }
 
-  private async connect(): Promise<pg.Client> {
+  private async connect(): Promise<pg.PoolClient> {
     if (!this._pool) {
       this._pool = new pg.Pool(Object.assign({ connectionTimeoutMillis: 2000 }, this._config));
     }
@@ -497,7 +497,7 @@ export class Builder {
                 }
               }
             } finally {
-              await client.release();
+              client.release();
             }
           } catch (e) {
             console.error(`Failed to read "${schema}.${name}" schema`);
