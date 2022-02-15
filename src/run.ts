@@ -475,7 +475,7 @@ function setParam(col: Column, prefix: string, set: string, model: string = 'mod
   return cond;
 }
 
-const tableAliases = /@"?([a-zA-Z_]+[a-zA-Z0-9_]*)"?(?!\.)\s(?:(?!\s*(?:left|right|cross|inner|outer|on|where)\s)\s*(?:[aA][sS]\s)?\s*"?([a-zA-Z_]+[a-zA-Z0-9_]*)?"?)?/gi;
+const tableAliases = /@"?([a-zA-Z_]+[a-zA-Z0-9_]*)"?(?!\.)\b(?:(?!\s+(?:left|right|cross|inner|outer|on|where|join|union)\b)\s*(?:[aA][sS]\s)?\s*"?([a-zA-Z_]+[a-zA-Z0-9_]*)?"?)?/gi;
 const fieldAliases = /@:?"?([a-zA-Z_]+[a-zA-Z0-9_]*)"?\."?([a-zA-Z_]+[a-zA-Z0-9_]+|\*)"?/gi;
 const params = /\$([a-zA-Z_]+[a-zA-Z0-9_]*)/g;
 
