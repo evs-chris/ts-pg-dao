@@ -10,8 +10,16 @@ export interface Connection extends pg.Client {
    * transaction for this connection, this is a noop.
    * */
   begin(): Promise<void>;
-  /** Roll back the current transaction for this connection. */
-  rollback(): Promise<void>;
+  /** Set a savepoint that can be rolled back to any number of times without
+   * fully aborting the transaction.
+   */
+  savepoint(): Promise<SavePoint>;
+  /** Roll back the current transaction for this connection. If a savepoint
+   * is given and can be rolled back to, the surrounding transaction will 
+   * not be aborted. If the savepoint fails or is not supplied, the whole
+   * transaction will be aborted.
+   * */
+  rollback(savepoint?: SavePoint): Promise<void>;
   /** Complete the current transaction for this connection. */
   commit(): Promise<void>;
   /** Determine whether there is an active transaction for this connection. */
@@ -48,6 +56,13 @@ export interface Connection extends pg.Client {
 }
 
 /**
+ * A savepoint genereated from a transaction.
+ */
+export interface SavePoint {
+  point: string;
+}
+
+/**
  * Enhances the given pg.Client with a few convenience methods for managing
  * transactions and a tagged template helper for executing a query with
  * interpolations as parameters.
@@ -60,6 +75,7 @@ export function enhance(client: pg.Client): Connection {
   res.inTransaction = false;
 
   res.begin = begin;
+  res.savepoint = savepoint;
   res.rollback = rollback;
   res.commit = commit;
   res.transact = transact;
@@ -75,10 +91,25 @@ async function begin(this: Connection) {
   if (this.inTransaction) return;
   await this.query('begin');
   this.inTransaction = true;
+  (this as any).__savepoint = 0;
 }
 
-async function rollback(this: Connection) {
+async function savepoint(this: Connection): Promise<SavePoint> {
+  if (!this.inTransaction) throw new Error(`Can't set a savepoint when not in transaction`);
+  const point = `step${(this as any).__savepoint++}`;
+  await this.query(`savepoint ${point}`);
+  return { point };
+}
+
+async function rollback(this: Connection, point?: SavePoint) {
   if (!this.inTransaction) throw new Error(`Can't rollback when not in transaction`);
+
+  if (point) {
+    try {
+      await this.query(`rollback to ${point.point}`);
+      return;
+    } catch {}
+  }
   await this.query('rollback');
   const t = this as any;
   // process rollback callbacks
