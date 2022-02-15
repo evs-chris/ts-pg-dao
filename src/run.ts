@@ -110,11 +110,11 @@ export async function write(config: BuiltConfig): Promise<void> {
       }
 
       const server = path.join(serverPath, (model.file || model.name) + '.ts');
-      console.log(`\twriting server ${model.name} to ${server}...`);
+      console.log(`    writing server ${model.name} to ${server}...`);
       await fs.writeFile(server, serverModel(config, model));
       if (!pathy) {
         const client = path.join(clientPath, (model.file || model.name) + '.ts');
-        console.log(`\twriting client ${model.name} to ${client}...`);
+        console.log(`    writing client ${model.name} to ${client}...`);
         await fs.writeFile(client, clientModel(config, model));
       }
     }
@@ -122,7 +122,7 @@ export async function write(config: BuiltConfig): Promise<void> {
     if (client && config.pgconfig.schemaCacheFile) {
       const cache: SchemaCache = { tables: [] };
       const cfg = config.pgconfig;
-      console.log(`\t - generating schema cache`);
+      console.log(`     - generating schema cache`);
 
       const allCols = (await client.query(columnQuery)).rows;
 
@@ -137,7 +137,7 @@ export async function write(config: BuiltConfig): Promise<void> {
         console.error(`Error generating schema cache:`, e);
       }
 
-      console.log(`\t - writing schema cache ${cfg.schemaCacheFile}`);
+      console.log(`     - writing schema cache ${cfg.schemaCacheFile}`);
       await fs.writeFile(cfg.schemaCacheFile, JSON.stringify(cache, null, ' '), { encoding: 'utf8' });
     }
   } finally {
@@ -153,7 +153,7 @@ export async function write(config: BuiltConfig): Promise<void> {
       return `export { default as ${m.name}${exports.length ? `, ${exports.join(', ')}` : ''} } from './${m.file || m.name}';`;
     }).join('\n');
     const server = path.join(serverPath, typeof config.index === 'string' ? config.index : 'index.ts');
-    console.log(`\twriting server index to ${server}...`);
+    console.log(`    writing server index to ${server}...`);
     await fs.writeFile(server, tpl);
     if (!pathy) {
       const tpl = models.map((m: ProcessModel) => {
@@ -164,7 +164,7 @@ export async function write(config: BuiltConfig): Promise<void> {
         return `export { default as ${m.name}${exports.length ? `, ${exports.join(', ')}` : ''} } from './${m.file || m.name}';`;
       }).join('\n');
       const client = path.join(clientPath, typeof config.index === 'string' ? config.index : 'index.ts');
-      console.log(`\twriting client index to ${client}...`);
+      console.log(`    writing client index to ${client}...`);
       await fs.writeFile(client, tpl);
     }
   }
@@ -556,11 +556,15 @@ function processQuery(config: Config, start: Query, model: ProcessModel): Proces
   }
 
   let sql = mapParams(query.sql, parms)[0];
+  const referencedTables: { [name: string]: number } = {};
 
   // map tables to models and record relevant aliases
   sql = sql.replace(tableAliases, (_m ,tbl, alias) => {
     const mdl = findModel(tbl, config);
     if (!mdl) throw new Error(`Could not find model for table ${tbl} referenced in query ${query.name}.`);
+
+    if (!referencedTables[tbl]) referencedTables[tbl] = 0;
+    referencedTables[tbl]++;
 
     const entry = { model: mdl, prefix: `${alias || tbl}__`, alias: alias || tbl, root: !alias && mdl === query.owner };
     if (entry.root) query.root = root = entry;
@@ -568,10 +572,28 @@ function processQuery(config: Config, start: Query, model: ProcessModel): Proces
     return `${tbl}${alias ? ` AS ${alias}` : ''} `;
   });
 
-  if (!root) {
-    query.root = root = { model: query.owner, prefix: '', alias: query.owner.table, root: true };
-    aliases[root.alias] = root;
+  const tableCount = Object.keys(referencedTables).length;
+
+  if (!tableCount && (query.owner.cols.find(c => c.cast) || (config.tzTimestamps && query.owner.cols.find(c => c.pgtype === 'timestamp'))) ) {
+    console.warn(`      >>>> query ${query.owner.name}.${query.name} may have columns that need to be cast\n        >> using something like 'select @${model.table[0]}.* from @${model.table} as ${model.table[0]};' will automtaically cast columns`);
   }
+
+  if (!root) {
+    const owners: AliasMap = {};
+    for (const k in aliases) {
+      if (aliases[k].model === query.owner) owners[k] = aliases[k];
+    }
+    const keys = Object.keys(owners);
+    if (keys.length === 1) {
+      owners[keys[0]].root = true;
+      query.root = root = owners[keys[0]];
+    } else {
+      query.root = root = { model: query.owner, prefix: '', alias: query.owner.table, root: true };
+      aliases[root.alias] = root;
+    }
+  }
+
+  if (root && tableCount === 1) root.prefix = '';
 
   // compute includes and select lists if available
   if (query.include && root) {
@@ -579,6 +601,8 @@ function processQuery(config: Config, start: Query, model: ProcessModel): Proces
   }
 
   buildTypes(query, root);
+
+  const referencedCols: { [table: string]: string[] } = {};
 
   // map and expand column aliases as necessary
   function mapFields(sql: string): string {
@@ -590,8 +614,11 @@ function processQuery(config: Config, start: Query, model: ProcessModel): Proces
         throw new Error(`Query ${query.owner.name}.${query.name} requires an entry for ${alias} before its use in column ref ${alias}.${col}.`);
       }
 
+      if (!referencedCols[mdl.table]) referencedCols[mdl.table] = [];
+      referencedCols[mdl.table].push(col);
+
       if (col === '*') {
-        return (entry.cols || entry.model.cols).map(c => `${alias}.${c.name}${mdl.cast(config, c)} AS ${entry.prefix}${c.name}`).join(', ');
+        return (entry.cols || entry.model.cols).map(c => tableCount === 1 ? `${c.name}${mdl.cast(config, c)}` : `${alias}.${c.name}${mdl.cast(config, c)} AS ${entry.prefix}${c.name}`).join(', ');
       } else {
         const c = mdl.fields.find(f => col === f.name);
         if (!c) throw new Error(`Could not find field for ${alias}.${col} referenced in query ${query.name}.`);
@@ -606,6 +633,13 @@ function processQuery(config: Config, start: Query, model: ProcessModel): Proces
   }
 
   sql = mapFields(sql);
+
+  for (const k in aliases) {
+    const alias = aliases[k];
+    const table = alias.model.table;
+    if (!referencedTables[table]) continue;
+    if (!referencedCols[table]) console.warn(`      >>>> table ${table} in ${query.owner.name}.${query.name} may have columns that need to be cast\n        >> referencing the columns as '@${alias.alias}.columnname' or '@${alias.alias}.*' will automatically cast columns`);
+  }
 
   const defaulted = (query.params || []).reduce((a, c) => a && (c.optional || !!c.default), true);
 
