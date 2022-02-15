@@ -118,7 +118,7 @@ async function rollback(this: Connection, point?: SavePoint) {
   // process rollback callbacks
   if (Array.isArray(t.__rruns)) {
     for (const r of t.__rruns) try { await r(); } catch {}
-    t.__cruns = [];
+    t.__rruns = [];
   }
   // discard commit callbacks
   if (Array.isArray(t.__cruns)) t.__cruns = [];
