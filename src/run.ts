@@ -211,10 +211,11 @@ export default class ${model.name} {
 
     if (${model.fields.filter(f => f.pkey || f.optlock).map(f => `model.${f.name} !== undefined`).join(' && ')}) {${updateMembers(config, model, '      ')}
 
+      let res: dao.QueryResult;
       const transact = !con.inTransaction;
       if (transact) await con.begin();
       try {
-        const res = await con.query(sql, params);
+        res = await con.query(sql, params);
         if (res.rowCount < 1) throw new Error('No matching row to update for ${model.name}');
         if (res.rowCount > 1) throw new Error('Too many matching rows updated for ${model.name}');
         if (transact) await con.commit();${changeFlag ? `
@@ -223,7 +224,7 @@ export default class ${model.name} {
         if (transact) await con.rollback();
         throw e;
       }
-      ${model.fields.find(f => f.optlock) ? `${model.fields.filter(f => f.optlock).map(f => `\n      model.${f.alias || f.name} = lock;`).join('')}` : ''}
+      ${model.fields.find(f => f.optlock) ? `${model.fields.filter(f => f.optlock).map(f => `\n      model.${f.alias || f.name} = res.rows[0].${f.alias || f.name};`).join('')}` : ''}
     } else {${insertMembers(config, model, '      ')}${loadFlag ? `
       model.${loadFlag} = false;` : ''}${changeFlag ? `
       model.${changeFlag} = false;` : ''}
@@ -416,8 +417,6 @@ function colToParam(f: Column) {
 
 function updateMembers(config: Config, model: Model, prefix: string): string {
   let res = `\n${prefix}const params = [];\n${prefix}const sets = [];\n${prefix}let sql = 'UPDATE ${model.table} SET ';`;
-  const lock = model.fields.find(f => f.optlock);
-  if (lock) res += `\n${prefix}const lock = new Date()${lock.pgtype === 'date' ? `.toISOString().substr(0, 10)` : ''};`;
   model.fields.forEach(f => {
     if (!f.pkey && !f.optlock) {
       res += setParam(f, prefix, `sets.push('"${f.name}" = $' + params.length)`);
@@ -427,13 +426,13 @@ function updateMembers(config: Config, model: Model, prefix: string): string {
   const locks = model.fields.filter(f => f.optlock);
 
   if (locks.length) {
-    res += `\n${locks.map(l => `${prefix}params.push(lock);\n${prefix}sets.push('"${l.name}" = $' + params.length);`).join('\n')}`;
+    res += `\n${locks.map(l => `${prefix}sets.push('"${l.name}" = now()');`).join('\n')}`;
   }
   res += `\n\n${prefix}sql += sets.join(', ');\n`;
   res += `\n${prefix}const count = params.length;`;
   const where = model.fields.filter(f => f.pkey || f.optlock);
   res += `\n${prefix}params.push(${where.map(f => `model.${f.alias || f.name}`).join(', ')});`;
-  res += `\n${prefix}sql += \` WHERE ${where.map((f, i) => `${f.optlock ? `date_trunc('millisecond', "${f.name}"${model.cast(config, f)})` : `"${f.name}"`} = $\${count + ${i + 1}}`).join(' AND ')}\`;`
+  res += `\n${prefix}sql += \` WHERE ${where.map((f, i) => `${f.optlock ? `date_trunc('millisecond', "${f.name}"${model.cast(config, f)})` : `"${f.name}"`} = $\${count + ${i + 1}}`).join(' AND ')}${locks.length ? ` RETURNING ${locks.map(l => `"${l.name}"${model.cast(config, l)}`).join(', ')}`: ''}\`;`
 
   return res;
 }
