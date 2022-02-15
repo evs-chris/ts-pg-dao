@@ -69,8 +69,9 @@ export { QueryResult } from 'pg';
  * transactions and a tagged template helper for executing a query with
  * interpolations as parameters.
  */
-export function enhance(client: pg.Client): Connection {
+export function enhance(client: pg.Client|pg.ClientConfig): Connection {
   if ('ts-pg-dao' in client) return client as Connection;
+  if (!('connect' in client)) client = new pg.Client(client);
   const res = client as any;
   res['ts-pg-dao'] = true;
 
