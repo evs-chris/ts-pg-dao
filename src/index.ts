@@ -62,6 +62,8 @@ export interface SavePoint {
   point: string;
 }
 
+export { QueryResult } from 'pg';
+
 /**
  * Enhances the given pg.Client with a few convenience methods for managing
  * transactions and a tagged template helper for executing a query with
