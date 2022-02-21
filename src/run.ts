@@ -206,8 +206,6 @@ export default class ${model.name} {
   static async save(con: dao.Connection, model: ${model.name}): Promise<${model.name}> {
     if (!model) throw new Error('Model is required');${model.hooks.beforesave ? `
     ${model.name}.beforesave(model);` : ''}
-    ${model.fields.filter(f => ~dates.indexOf(f.cast || f.pgtype)).map(f => `if (typeof model.${f.name} === 'string') model.${f.name} = new Date(model.${f.name});
-    `).join('')}
 
     if (${model.fields.filter(f => f.pkey || f.optlock).map(f => `model.${f.name} !== undefined`).join(' && ')}) {${updateMembers(config, model, '      ')}
 
@@ -419,7 +417,7 @@ function updateMembers(config: Config, model: Model, prefix: string): string {
   let res = `\n${prefix}const params = [];\n${prefix}const sets = [];\n${prefix}let sql = 'UPDATE ${model.table} SET ';`;
   model.fields.forEach(f => {
     if (!f.pkey && !f.optlock) {
-      res += setParam(f, prefix, `sets.push('"${f.name}" = $' + params.length)`);
+      res += setParam(f, prefix, `sets.push('"${f.name}" = $' + params.length${f.pgtype === 'timestamp' && config.tzTimestamps ? ` + '::timestamptz'` : ''})`);
     }
   });
 
@@ -438,17 +436,17 @@ function updateMembers(config: Config, model: Model, prefix: string): string {
 }
 
 function insertMembers(config: Config, model: Model, prefix: string): string {
-  let res = `\n${prefix}const params = [];\n${prefix}const sets = [];\n${prefix}let sql = 'INSERT INTO ${model.table} ';`;
+  let res = `\n${prefix}const params = [];\n${prefix}const sets = [];\n${prefix}let sql = 'INSERT INTO ${model.table} ';\n${prefix}let casts = {};`;
   for (const f of model.fields) {
     if (!f.optlock) {
-      res += setParam(f, prefix, `sets.push('${f.name}')`);
+      res += setParam(f, prefix, `sets.push('${f.name}')${f.pgtype === 'timestamp' && config.tzTimestamps ? `; casts['${f.name}'] = '::timestamptz'` : ''}`);
       if (!f.elidable) res += `\n${prefix}else throw new Error('Missing non-elidable field ${f.alias || f.name}');`;
     }
   }
 
   const ret = model.fields.filter(f => f.pkey || f.optlock || (f.elidable && f.pgdefault));
   const locks = model.fields.filter(f => f.optlock);
-  res += `\n${prefix}sql += \`(\${sets.map(s => \`"\${s}"\`).join(', ')}\${${locks.length} && sets.length ? ', ' : ''}${locks.map(l => l.name).join(', ')}) VALUES (\${sets.map((n, i) => \`$\${i + 1}\`)}\${${locks.length} && sets.length ? ', ' : ''}${locks.map(_l => 'now()').join(', ')})${ret.length ? ` RETURNING ${ret.map(f => `"${f.name}"${model.cast(config, f)}`).join(', ')}` : ''};\`;`;
+  res += `\n${prefix}sql += \`(\${sets.map(s => \`"\${s}"\`).join(', ')}\${${locks.length} && sets.length ? ', ' : ''}${locks.map(l => l.name).join(', ')}) VALUES (\${sets.map((n, i) => \`$\${i + 1}\${casts[n] || ''}\`)}\${${locks.length} && sets.length ? ', ' : ''}${locks.map(_l => 'now()').join(', ')})${ret.length ? ` RETURNING ${ret.map(f => `"${f.name}"${model.cast(config, f)}`).join(', ')}` : ''};\`;`;
   res += `\n\n${prefix}const res = (await con.query(sql, params)).rows[0];`
   res += ret.map(f => `\n${prefix}model.${f.alias || f.name} = res.${f.name};`).join('');
 
