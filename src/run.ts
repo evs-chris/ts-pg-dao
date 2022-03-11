@@ -427,10 +427,13 @@ function updateMembers(config: Config, model: Model, prefix: string): string {
     res += `\n${locks.map(l => `${prefix}sets.push('"${l.name}" = now()');`).join('\n')}`;
   }
   res += `\n\n${prefix}sql += sets.join(', ');\n`;
-  res += `\n${prefix}const count = params.length;`;
-  const where = model.fields.filter(f => f.pkey || f.optlock);
-  res += `\n${prefix}params.push(${where.map(f => `model.${f.alias || f.name}`).join(', ')});`;
-  res += `\n${prefix}sql += \` WHERE ${where.map((f, i) => `${f.optlock ? `date_trunc('millisecond', "${f.name}"${model.cast(config, f)})` : `"${f.name}"`} = $\${count + ${i + 1}}`).join(' AND ')}${locks.length ? ` RETURNING ${locks.map(l => `"${l.name}"${model.cast(config, l)}`).join(', ')}`: ''}\`;`
+  res += `\n${prefix}let count = params.length;`;
+  const keys = model.fields.filter(f => f.pkey);
+  const keystrs = keys.map(f => `"${f.name}" = $\${++count}`);
+  const lockstrs = locks.map(f => `\${model.${f.name} === null ? \`"${f.name}" is null\` : \`date_trunc('millisecond', "${f.name}"${model.cast(config, f)}) = $\${++count}\`}`);
+  res += `\n${prefix}params.push(${keys.map(f => `model.${f.alias || f.name}`).join(', ')});`;
+  res += locks.map(f => `\n${prefix}if (model.${f.name} !== null) params.push(model.${f.name});`).join('');
+  res += `\n${prefix}sql += \` WHERE ${keystrs.concat(lockstrs).join(' AND ')}${locks.length ? ` RETURNING ${locks.map(l => `"${l.name}"${model.cast(config, l)}`).join(', ')}`: ''}\`;`
 
   return res;
 }
