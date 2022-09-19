@@ -5,7 +5,7 @@ import * as rl from 'readline';
 import * as fs from 'fs-extra';
 import * as pg from 'pg';
 import { config, write, ConfigOpts } from './run';
-import { BuildConfig, tableQuery, columnQuery, ColumnSchema, commentQuery, enumQuery, SchemaCache, Types, functionQuery } from './main';
+import { BuildConfig, tableQuery, columnQuery, ColumnSchema, commentQuery, enumQuery, SchemaCache, Types, functionQuery, indexQuery, viewQuery } from './main';
 import { PatchOptions, patchConfig } from './patch';
 
 const pkg = require(path.join(__dirname, '../package.json'));
@@ -67,6 +67,8 @@ export async function readSchema(connect: pg.ClientConfig) {
         res.tables.push({ name: t.name, schema: t.schema, columns: cols });
       }
       res.functions = (await client.query(functionQuery)).rows;
+      res.indexes = (await client.query(indexQuery)).rows;
+      res.views = (await client.query(viewQuery)).rows;
     } finally {
       await client.end();
     }
@@ -82,6 +84,8 @@ commands.push(cli.command('cache')
   .option('-n, --name <name>', 'Use only the named config')
   .option('-t, --tables <list>', 'Only target the named table(s)', str => str.split(','))
   .option('-f, --functions <list>', 'Only target the named function(s)', str => str.split(','))
+  .option('-i, --indexes <list>', 'Only target the named index(es)', str => str.split(','))
+  .option('-v, --views <list>', 'Only target the named view(s)', str => str.split(','))
   .option('-u, --update', 'Update schema cache from the database')
   .option('-l, --list', 'List all the entries in the cache')
   .option('-q, --query', 'List all the entries in the database')
@@ -150,15 +154,36 @@ commands.push(cli.command('cache')
           cache.functions = (cache.functions || []).filter(f => {
             const found = cmd.functions.includes(f.name);
             if (found) console.log(`Removing "${f.schema}"."${f.name}"(${f.args}): ${f.result}...`);
-              return !found;
+            return !found;
+          });
+        }
+
+        if (cmd.indexes) {
+          cache.indexes = (cache.indexes || []).filter(i => {
+            const found = cmd.indexes.includes(i.name);
+            if (found) console.log(`Removing index "${i.schema}"."${i.name}"...`);
+            return !found;
+          });
+        }
+
+        if (cmd.views) {
+          cache.views = (cache.views || []).filter(v => {
+            const found = cmd.views.includes(v.name);
+            if (found) console.log(`Removing view "${v.schema}"."${v.name}"...`);
+            return !found;
           });
         }
       }
 
       if (cmd.update) {
+        if (!cache.tables) cache.tables = [];
         if (!cache.functions) cache.functions = [];
-        const tables = cmd.tables ? cache.tables.filter(t => cmd.tables.includes(t.name)) : cache.tables;
-        const functions = cmd.functions ? cache.functions.filter(f => cmd.functions.includes(f.name)) : cache.functions;
+        if (!cache.indexes) cache.indexes = [];
+        if (!cache.views) cache.views = [];
+        const tables = cmd.tables ? cache.tables.filter(t => cmd.tables.includes(t.name)) : (!cmd.functions && !cmd.indexes && !cmd.views) ? cache.tables : [];
+        const functions = cmd.functions ? cache.functions.filter(f => cmd.functions.includes(f.name)) : (!cmd.tables && !cmd.indexes && !cmd.views) ? cache.functions : [];
+        const indexes = cmd.indexes ? cache.indexes.filter(i => cmd.indexes.includes(i.name)) : (!cmd.tables && !cmd.functions && !cmd.views) ? cache.indexes : [];
+        const views = cmd.views ? cache.views.filter(v => cmd.views.includes(v.name)) : (!cmd.tables && !cmd.functions && !cmd.indexes) ? cache.views : [];
         const schema = await readSchema(connect);
 
         // update current tables
@@ -179,6 +204,24 @@ commands.push(cli.command('cache')
           } else console.log(`"${func.schema}"."${func.name}"(${func.args}): ${func.result} not found in target database`);
         }
 
+        // update current indexes
+        for (const idx of indexes) {
+          const i = schema.indexes.find(i => i.schema === idx.schema && i.name === idx.name && i.table === idx.table);
+          if (i) {
+            cache.indexes[cache.indexes.indexOf(idx)] = i;
+            console.log(`Updating index "${i.schema}"."${i.name}"...`);
+          } else console.log(`Index "${i.schema}"."${i.name}" not found in target database`);
+        }
+
+        // update current views
+        for (const view of views) {
+          const i = schema.views.find(i => i.schema === view.schema && i.name === view.name);
+          if (i) {
+            cache.views[cache.views.indexOf(view)] = i;
+            console.log(`Updating view "${i.schema}"."${i.name}"...`);
+          } else console.log(`View "${i.schema}"."${i.name}" not found in target database`);
+        }
+
         // look for new tables
         if (cmd.tables) {
           for (const t of cmd.tables) {
@@ -190,6 +233,7 @@ commands.push(cli.command('cache')
           }
         }
 
+        // look for new functions
         if (cmd.functions) {
           for (const n of cmd.functions) {
             const funcs = schema.functions.filter(f => f.name === n);
@@ -197,6 +241,32 @@ commands.push(cli.command('cache')
               if (!cache.functions.find(f => f.schema === fn.schema && f.name === fn.name && f.args === fn.args && f.result === fn.result)) {
                 console.log(`Adding "${fn.schema}"."${fn.name}"(${fn.args}): ${fn.result}...`);
                 cache.functions.push(fn);
+              }
+            }
+          }
+        }
+
+        // look for new indexes
+        if (cmd.indexes) {
+          for (const n of cmd.indexes) {
+            const idxs = schema.indexes.filter(i => i.name === n);
+            for (const idx of idxs) {
+              if (!cache.indexes.find(i => i.schema === idx.schema && i.name === idx.name && i.table === idx.table)) {
+                console.log(`Adding index "${idx.schema}"."${idx.name}"...`);
+                cache.indexes.push(idx);
+              }
+            }
+          }
+        }
+
+        // look for new views
+        if (cmd.views) {
+          for (const n of cmd.views) {
+            const vs = schema.views.filter(i => i.name === n);
+            for (const v of vs) {
+              if (!cache.views.find(v => v.schema === v.schema && v.name === v.name)) {
+                console.log(`Adding view "${v.schema}"."${v.name}"...`);
+                cache.views.push(v);
               }
             }
           }
@@ -220,6 +290,24 @@ commands.push(cli.command('cache')
             }
           }
         }
+
+        if (cmd.indexes && cmd.indexes.length === 1 && cmd.indexes[0] === '*') {
+          for (const idx of schema.indexes || []) {
+            if (!cache.indexes.find(i => i.schema === idx.schema && i.name === idx.name && i.table === idx.table)) {
+              console.log(`Adding index "${idx.schema}"."${idx.name}...`);
+              cache.indexes.push(idx);
+            }
+          }
+        }
+
+        if (cmd.views && cmd.views.length === 1 && cmd.views[0] === '*') {
+          for (const view of schema.views || []) {
+            if (!cache.views.find(v => v.schema === view.schema && v.name === view.name)) {
+              console.log(`Adding view "${view.schema}"."${view.name}...`);
+              cache.views.push(view);
+            }
+          }
+        }
       }
 
       if (cmd.update || cmd.remove) {
@@ -230,6 +318,8 @@ commands.push(cli.command('cache')
           const b = `"${r.schema}"."${r.name}"(${r.args}): ${r.result}`;
           return a < b ? -1 : a > b ? 1 : 0;
         });
+        cache.indexes.sort((l, r) => l.name < r.name ? -1 : l.name > r.name ? 1 : 0);
+        cache.views.sort((l, r) => l.name < r.name ? -1 : l.name > r.name ? 1 : 0);
         await fs.writeFile(config.schemaCacheFile, JSON.stringify(cache, null, ' '), 'utf8');
         console.log(`Wrote ${config.schemaCacheFile}`);
       }
@@ -243,6 +333,8 @@ commands.push(cli.command('patch')
   .option('-n, --name <name>', 'Only use the named config')
   .option('-t, --tables <list>', 'Only target the named table(s)', str => str.split(','))
   .option('-f, --functions <list>', 'Only target the named function(s)', str => str.split(','))
+  .option('-i, --indexes <list>', 'Only target the named index(es)', str => str.split(','))
+  .option('-v, --views <list>', 'Only target the named view(s)', str => str.split(','))
   .option('-H, --host <host>', 'Override the target connection host for the named config.')
   .option('-U, --user <user>', 'Override the target connection user for the named config.')
   .option('-W, --password [password]', 'Read the target password from the stdin for the named config.')
@@ -276,6 +368,8 @@ commands.push(cli.command('patch')
           }
           if (cmd.tables) opts.tables = cmd.tables;
           if (cmd.functions) opts.functions = cmd.functions;
+          if (cmd.indexes) opts.indexes = cmd.indexes;
+          if (cmd.views) opts.views = cmd.views;
         }
         await patchConfig(config.config, opts);
       } else {

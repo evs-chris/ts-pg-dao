@@ -334,6 +334,8 @@ WHERE pg_catalog.pg_function_is_visible(p.oid)
   AND n.nspname <> 'pg_catalog'
   AND n.nspname <> 'information_schema'
 ORDER BY 1, 2, 4;`;
+export const indexQuery = `select schemaname as "schema", indexname as "name", tablename as "table", indexdef as def from pg_indexes where schemaname <> 'pg_catalog' and schemaname <> 'information_schema';`;
+export const viewQuery = `select schemaname as "schema", viewname as "name", definition as "def", false as "materialized" from pg_views where schemaname <> 'pg_catalog' and schemaname <> 'information_schema' union all select schemaname as "schema", matviewname as "name", definition as "def", true as "materialized" from pg_matviews where schemaname <> 'pg_catalog' and schemaname <> 'information_schema';`;
 
 export function config(config: BuilderConfig, fn: (builder: Builder) => Promise<Config>): BuildConfig {
   const builder = new PrivateBuilder(config);
@@ -453,9 +455,23 @@ export interface FunctionSchema {
   args: string;
   def: string;
 }
+export interface ViewSchema {
+  schema: string;
+  name: string;
+  materialized: boolean;
+  def: string;
+}
+export interface IndexSchema {
+  schema: string;
+  name: string;
+  table: string;
+  def: string;
+}
 export interface SchemaCache {
   tables: TableSchema[];
   functions?: FunctionSchema[];
+  indexes?: IndexSchema[];
+  views?: ViewSchema[];
 }
 
 export const BuilderOptions = {

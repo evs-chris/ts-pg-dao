@@ -1,12 +1,14 @@
 import * as fs from 'fs-extra';
 import * as pg from 'pg';
-import { SchemaConfig, tableQuery, columnQuery, SchemaCache, ColumnSchema, FunctionSchema, functionQuery } from './main';
+import { SchemaConfig, tableQuery, columnQuery, SchemaCache, ColumnSchema, functionQuery, indexQuery, viewQuery } from './main';
 
 export interface PatchOptions {
   details?: boolean;
   commit?: boolean;
   tables?: string[];
   functions?: string[];
+  indexes?: string[];
+  views?: string[];
   connect?: pg.ClientConfig & { schemaCacheFile?: string };
   log?: (msg: string) => void;
 }
@@ -18,6 +20,8 @@ export interface PatchConfig extends pg.ClientConfig, SchemaConfig {
 export interface PatchResult {
   tables: { [name: string]: string[] };
   functions: { [name: string]: string };
+  indexes: { [name: string]: string };
+  views: { [name: string]: string };
   statements: string[];
 }
 
@@ -40,6 +44,8 @@ export async function patchConfig(config: PatchConfig, opts: PatchOptions = {}) 
   const res: PatchResult = {
     tables: {},
     functions: {},
+    indexes: {},
+    views: {},
     statements: [],
   };
 
@@ -49,7 +55,10 @@ export async function patchConfig(config: PatchConfig, opts: PatchOptions = {}) 
     await client.connect();
     const cache: SchemaCache = JSON.parse(await fs.readFile(connect.schemaCacheFile, { encoding: 'utf8' }));
     const schema: SchemaCache = { tables: [] };
+    if (!cache.tables) cache.tables = [];
     if (!cache.functions) cache.functions = [];
+    if (!cache.indexes) cache.indexes = [];
+    if (!cache.views) cache.views = [];
 
     const name = config.name ? `${config.name} (${connect.user || process.env.USER}@${connect.host || 'localhost'}:${connect.port || 5432}/${connect.database || process.env.USER})` : `${connect.user || process.env.USER}@${connect.host || 'localhost'}:${connect.port || 5432}/${connect.database || process.env.USER})`;
 
@@ -65,19 +74,21 @@ export async function patchConfig(config: PatchConfig, opts: PatchOptions = {}) 
       }
 
       schema.functions = (await client.query(functionQuery)).rows;
+      schema.indexes = (await client.query(indexQuery)).rows;
+      schema.views = (await client.query(viewQuery)).rows;
 
       for (const ct of cache.tables) {
         if (opts.tables && !opts.tables.includes(ct.name)) continue;
         const t = schema.tables.find(e => e.name === ct.name && e.schema === ct.schema);
         if (!t) {
-          const q = `create table "${ct.name}" (${ct.columns.map(createColumn).join(', ')});`;
+          const q = `create table "${ct.schema}"."${ct.name}" (${ct.columns.map(createColumn).join(', ')});`;
           qs.push(q);
           res.tables[ct.name] = [q];
         } else {
           for (const col of ct.columns) {
             const c = t.columns.find(e => e.name === col.name);
             if (!c) {
-              const q = `alter table "${ct.name}" add column "${col.name}" ${colType(col)}${col.nullable ? '' : ' not null'}${col.default ? ` default ${col.default}` : ''};`;
+              const q = `alter table "${ct.schema}"."${ct.name}" add column "${col.name}" ${colType(col)}${col.nullable ? '' : ' not null'}${col.default ? ` default ${col.default}` : ''};`;
               qs.push(q);
               (res.tables[ct.name] || (res.tables[ct.name] = [])).push(q);
             } else if (opts.details && (c.default !== col.default || c.nullable !== col.nullable || c.type !== col.type || c.length !== col.length || JSON.stringify(c.precision || []) !== JSON.stringify(col.precision || []))) {
@@ -88,12 +99,12 @@ export async function patchConfig(config: PatchConfig, opts: PatchOptions = {}) 
                 t.push(q);
               }
               if (c.default !== col.default) {
-                const q = `alter table "${ct.name}" alter column "${col.name}" ${col.default ? 'set' : 'drop'} default${col.default ? ` ${col.default}` : ''};`;
+                const q = `alter table "${ct.schema}"."${ct.name}" alter column "${col.name}" ${col.default ? 'set' : 'drop'} default${col.default ? ` ${col.default}` : ''};`;
                 qs.push(q);
                 t.push(q);
               }
               if (c.nullable !== col.nullable) {
-                const q = `alter table "${ct.name}" alter column "${col.name}" ${col.nullable ? 'drop' : 'set'} not null;`;
+                const q = `alter table "${ct.schema}"."${ct.name}" alter column "${col.name}" ${col.nullable ? 'drop' : 'set'} not null;`;
                 qs.push(q);
                 t.push(q);
               }
@@ -108,6 +119,26 @@ export async function patchConfig(config: PatchConfig, opts: PatchOptions = {}) 
         if (!f || f.def !== cf.def) {
           qs.push(cf.def);
           res.functions[`${cf.name}(${cf.args}): ${cf.result}`] = cf.def;
+        }
+      }
+
+      for (const cv of cache.views) {
+        if (opts.views && !opts.views.includes(cv.name)) continue;
+        const v = schema.views.find(e => e.schema === cv.schema && e.name === cv.name);
+        if (!v || v.def !== cv.def) {
+          const def = `DROP ${cv.materialized ? 'MATERIALIZED ' : ''}VIEW IF EXISTS "${cv.schema}"."${cv.name}"; CREATE ${cv.materialized ? 'MATERIALIZED ' : ''}VIEW "${cv.schema}"."${cv.name}" AS ${cv.def};`;
+          qs.push(def);
+          res.views[`${cv.name}`] = def;
+        }
+      }
+
+      for (const ci of cache.indexes) {
+        if (opts.indexes && !opts.indexes.includes(ci.name)) continue;
+        const i = schema.indexes.find(e => e.schema === ci.schema && e.name === ci.name && e.table === ci.table);
+        if (!i || i.def !== ci.def) {
+          const def = `DROP INDEX IF EXISTS "${ci.schema}"."${ci.name}"; ${ci.def};`;
+          qs.push(def);
+          res.indexes[`${ci.table}.${ci.name}`] = def;
         }
       }
 
