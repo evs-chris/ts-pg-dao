@@ -53,6 +53,10 @@ export interface Connection extends pg.Client {
    * be discarded.
    */
   onRollback(run: () => void|Promise<void>): Promise<void>;
+  readonly ['ts-pg-dao']: {
+    attachQueryToError?: boolean;
+    attachParametersToError?: boolean;
+  };
 }
 
 /**
@@ -73,7 +77,10 @@ export function enhance(client: pg.Client|pg.ClientConfig): Connection {
   if ('ts-pg-dao' in client) return client as Connection;
   if (!('connect' in client)) client = new pg.Client(client);
   const res = client as any;
-  res['ts-pg-dao'] = true;
+  const config: {
+    attachQueryToError?: boolean;
+    attachParametersToError?: boolean;
+  } = res['ts-pg-dao'] = { attachQueryToError: true };
 
   res.inTransaction = false;
 
@@ -86,6 +93,43 @@ export function enhance(client: pg.Client|pg.ClientConfig): Connection {
   res.lit = lit;
   res.onCommit = onCommit;
   res.onRollback = onRollback;
+
+  const query = res.query;
+  let lastq: string;
+  let lastp: any[];
+  res.query = function(...args: any[]):any {
+    if (typeof args[0] === 'string') {
+      lastq = args[0];
+      if (Array.isArray(args[1])) lastp = args[1];
+    } else if (typeof args[0] === 'object' && args[0] && typeof args[0].text === 'string') {
+      lastq = args[0].text;
+      if (Array.isArray(args[0].values)) lastp = args[0].values;
+    }
+
+
+    if (typeof args[args.length - 1] === 'function') {
+      query.apply(res, args.slice(0, -1).concat([(err: any, res: any) => {
+        if (err && lastq) {
+          if (config.attachQueryToError) err.query = lastq;
+          if (config.attachParametersToError) err.parameters = lastp;
+        }
+        lastq = lastp = null;
+        args[args.length - 1](err, res);
+      }]));
+    } else {
+      return new Promise((ok, fail) => {
+        query.apply(res, args.concat([(err: any, res: any) => {
+          if (err && lastq) {
+            if (config.attachQueryToError) err.query = lastq;
+            if (config.attachParametersToError) err.parameters = lastq;
+          }
+          lastq = lastp = null;
+          if (err) fail(err);
+          else ok(res);
+        }]));
+      });
+    }
+  }
 
   return res as Connection;
 }
