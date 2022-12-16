@@ -80,7 +80,8 @@ export function enhance(client: pg.Client|pg.ClientConfig): Connection {
   const config: {
     attachQueryToError?: boolean;
     attachParametersToError?: boolean;
-  } = res['ts-pg-dao'] = { attachQueryToError: true };
+    clientStack?: boolean;
+  } = res['ts-pg-dao'] = { attachQueryToError: true, clientStack: true };
 
   res.inTransaction = false;
 
@@ -106,6 +107,7 @@ export function enhance(client: pg.Client|pg.ClientConfig): Connection {
       if (Array.isArray(args[0].values)) lastp = args[0].values;
     }
 
+    const stack = config.clientStack ? new Error() : null;
 
     if (typeof args[args.length - 1] === 'function') {
       query.apply(res, args.slice(0, -1).concat([(err: any, res: any) => {
@@ -113,6 +115,7 @@ export function enhance(client: pg.Client|pg.ClientConfig): Connection {
           if (config.attachQueryToError) err.query = lastq;
           if (config.attachParametersToError) err.parameters = lastp;
         }
+        if (err && stack) err.stack = `${stack.stack}\n--- Driver exception:\n${err.stack}`
         lastq = lastp = null;
         args[args.length - 1](err, res);
       }]));
@@ -123,6 +126,7 @@ export function enhance(client: pg.Client|pg.ClientConfig): Connection {
             if (config.attachQueryToError) err.query = lastq;
             if (config.attachParametersToError) err.parameters = lastq;
           }
+          if (err && stack) err.stack = `${stack.stack}\n--- Driver exception:\n${err.stack}`
           lastq = lastp = null;
           if (err) fail(err);
           else ok(res);
