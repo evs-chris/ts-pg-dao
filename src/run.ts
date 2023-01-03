@@ -322,7 +322,7 @@ export default class ${model.name} {
   tpl += `
   }`;
 
-  tpl += stripDates(model);
+  tpl += stripDates(config, model);
 
   tpl += `${model.serverBody}\n`;
 
@@ -365,7 +365,7 @@ function clientModel(config: Config, model: ProcessModel): string {
   static lengths = { ${model.cols.filter(c => c.length).map(c => `${c.alias || c.name}: ${c.length}`).join(', ')} };
   static precisions = { ${model.cols.filter(c => c.precision).map(c => `${c.alias || c.name}: ${JSON.stringify(c.precision)}`).join(', ')} }\n`;
 
-  tpl += stripDates(model);
+  tpl += stripDates(config, model);
 
   tpl += `}`;
 
@@ -375,11 +375,24 @@ function clientModel(config: Config, model: ProcessModel): string {
   return tpl;
 }
 
-function stripDates(model: ProcessModel): string {
+function stripDates(config: BuiltConfig, model: ProcessModel): string {
+  let children: string[] = [];
+  for (const k in model._extras) {
+    let ck = `if ('${k}' in model && model['${k}']) `;
+    let e = model._extras[k];
+    const arr = e.endsWith('[]');
+    e = arr ? e.slice(0, -2) : e;
+    if (!config.models.find(m => m.name === e)) continue;
+    if (arr) ck += `model['${k}'].forEach(c => ${e}.stripDates(c));`
+    else ck += `${e}.stripDates(model['${k}']);`
+    children.push(ck);
+  }
   return `
   /** Stringify dates so that they persist as entered without possible skew by timezone. */
   static stripDates(model: ${model.name}) {${model.cols.filter(c => (c.cast || c.pgtype) === 'date').map(c => `
-    if ((model.${c.alias || c.name} as any) instanceof Date) { const d = model.${c.alias || c.name} as any as Date; model.${c.alias || c.name} = \`\${('' + d.getFullYear()).padStart(4, '0')}-\${d.getMonth() < 9 ? '0' : ''}\${d.getMonth() + 1}-\${d.getDate() < 10 ? '0' : ''}\${d.getDate()}\` as any; }`).join('')}
+    if ((model.${c.alias || c.name} as any) instanceof Date) { const d = model.${c.alias || c.name} as any as Date; model.${c.alias || c.name} = \`\${('' + d.getFullYear()).padStart(4, '0')}-\${d.getMonth() < 9 ? '0' : ''}\${d.getMonth() + 1}-\${d.getDate() < 10 ? '0' : ''}\${d.getDate()}\` as any; }`).join('')}${
+    children.length ? `
+    ${children.join('\n    ')}` : ''}
   }
   `;
 }
