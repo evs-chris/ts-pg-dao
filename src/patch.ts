@@ -96,7 +96,17 @@ export async function patchConfig(config: PatchConfig, opts: PatchOptions = {}) 
             } else if (opts.details && (c.default !== col.default || c.nullable !== col.nullable || c.type !== col.type || c.length !== col.length || JSON.stringify(c.precision || []) !== JSON.stringify(col.precision || []))) {
               const t = res.tables[ct.name] || (res.tables[ct.name] = []);
               if (c.type !== col.type || c.length !== col.length || JSON.stringify(c.precision || []) !== JSON.stringify(col.precision || [])) {
-                const q = `alter table "${ct.name}" alter column "${col.name}" type ${colType(col)};`;
+                const typ = colType(col);
+                let q = `alter table "${ct.name}" alter column "${col.name}" type ${typ};`;
+                if (col.type === c.type) {
+                  if (col.length !== c.length) {
+                    if (col.length >= c.length) q += ` -- safe lengthen`;
+                    else q += ` -- warning, unsafe shorten (${c.length} to ${col.length})`;
+                  } else if (JSON.stringify(col.precision) !== JSON.stringify(c.precision)) {
+                    if (col.precision[0] >= c.precision[0] && col.precision[1] >= c.precision[1]) q += ` -- safe add precision`;
+                    else q += ` -- warning, unsafe remove precision (${c.precision} to ${col.precision})`;
+                  }
+                }
                 qs.push(q);
                 t.push(q);
               }
