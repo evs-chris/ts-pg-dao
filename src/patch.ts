@@ -116,7 +116,13 @@ export async function patchConfig(config: PatchConfig, opts: PatchOptions = {}) 
                 t.push(q);
               }
               if (c.nullable !== col.nullable) {
-                const q = `alter table "${ct.schema}"."${ct.name}" alter column "${col.name}" ${col.nullable ? 'drop' : 'set'} not null;`;
+                let q: string;
+                if (!col.nullable && col.default) {
+                  q = `update "${ct.schema}"."${ct.name}" set "${col.name}" = ${col.default} where "${col.name}" is null; -- warning, possible data change`;
+                  qs.push(q);
+                  t.push(q);
+                }
+                q = `alter table "${ct.schema}"."${ct.name}" alter column "${col.name}" ${col.nullable ? 'drop' : 'set'} not null;`;
                 qs.push(q);
                 t.push(q);
               }
