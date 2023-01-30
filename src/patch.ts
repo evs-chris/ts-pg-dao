@@ -1,6 +1,7 @@
 import * as fs from 'fs-extra';
 import * as pg from 'pg';
 import { SchemaConfig, tableQuery, columnQuery, SchemaCache, ColumnSchema, functionQuery, indexQuery, viewQuery } from './main';
+import { enhance } from './index'
 
 export interface PatchOptions {
   details?: boolean;
@@ -53,6 +54,7 @@ export async function patchConfig(config: PatchConfig, opts: PatchOptions = {}) 
     const qs: string[] = res.statements;
     const client = new pg.Client(connect);
     await client.connect();
+    enhance(client);
     const cache: SchemaCache = JSON.parse(await fs.readFile(connect.schemaCacheFile, { encoding: 'utf8' }));
     const schema: SchemaCache = { tables: [] };
     if (!cache.tables) cache.tables = [];
