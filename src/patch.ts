@@ -52,9 +52,6 @@ export async function patchConfig(config: PatchConfig, opts: PatchOptions = {}) 
 
   if (config && config.schemaCacheFile && connect && connect.database) {
     const qs: string[] = res.statements;
-    const client = new pg.Client(connect);
-    await client.connect();
-    enhance(client);
     const cache: SchemaCache = JSON.parse(await fs.readFile(connect.schemaCacheFile, { encoding: 'utf8' }));
     const schema: SchemaCache = { tables: [] };
     if (!cache.tables) cache.tables = [];
@@ -65,6 +62,9 @@ export async function patchConfig(config: PatchConfig, opts: PatchOptions = {}) 
     const name = config.name ? `${config.name} (${connect.user || process.env.USER}@${connect.host || 'localhost'}:${connect.port || 5432}/${connect.database || process.env.USER})` : `${connect.user || process.env.USER}@${connect.host || 'localhost'}:${connect.port || 5432}/${connect.database || process.env.USER})`;
 
     log(`Patching ${name}...`);
+
+    const client = enhance(new pg.Client(connect));
+    await client.connect();
 
     try {
       const allCols = (await client.query(columnQuery)).rows;
