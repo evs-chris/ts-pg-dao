@@ -90,6 +90,7 @@ interface InternalInfo extends EnhanceInfo {
   __onrollback?: RollbackCallback[];
   __onend?: EndCallback[];
   __onresult?: ResultCallback[];
+  __savepoint?: number;
 }
 
 /**
@@ -256,12 +257,12 @@ async function begin(this: Connection) {
   if (this.inTransaction) return;
   await this.query('begin');
   this.inTransaction = true;
-  (this as any).__savepoint = 0;
+  (this[cfgprop] as InternalInfo).__savepoint = 0;
 }
 
 async function savepoint(this: Connection): Promise<SavePoint> {
   if (!this.inTransaction) throw new Error(`Can't set a savepoint when not in transaction`);
-  const point = `step${(this as any).__savepoint++}`;
+  const point = `step${(this[cfgprop] as InternalInfo).__savepoint++}`;
   await this.query(`savepoint ${point}`);
   return { point };
 }
@@ -292,9 +293,9 @@ async function rollback(this: Connection, point?: SavePoint, err?: Error) {
 async function commit(this: Connection) {
   if (!this.inTransaction) throw new Error(`Can't commit when not in transaction`);
   await this.query('commit');
-  const t = this as any;
+  const t = this[cfgprop] as InternalInfo;
   // process commit callbacks
-  if (Array.isArray(t.__oncommit)) for (const r of t.__oncommit) try { r(); } catch {}
+  if (Array.isArray(t.__oncommit)) for (const r of t.__oncommit) try { r(this); } catch {}
   // discard callbacks
   t.__oncommit = t.__onrollback = undefined;
   this.inTransaction = false;
