@@ -341,7 +341,10 @@ function clientModel(config: Config, model: ProcessModel): string {
   let tpl = `${
     model.extraImports && model.extraImports.length ? model.extraImports.map(o => `import ${o} from './${o}';`).join('\n') + '\n' : ''
 }${model._imports.length ? '\n' + model._imports.join(';\n') + '\n' : ''}${model.extraTypes && model.extraTypes.length ? '\n' + model.extraTypes.map(([n, t]) => `export type ${n} = ${t};`).join('\n') + '\n' : ''
-}export default class ${model.name} {\n`;
+}export default class ${model.name} {\n
+  constructor(props?: Partial<${model.name}>) {
+    if (props) Object.assign(this, props);
+  }\n`;
 
   const hasPkey = model.pkeys.length > 0;
 
