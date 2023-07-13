@@ -699,7 +699,7 @@ function processQuery(config: Config, start: Query, model: ProcessModel): Proces
   }
 
   const res: ProcessQueryResult = {
-    method: `  static async ${query.name}(con: dao.Connection, params: { ${(query.params || []).map(p => `${p.name}${p.optional || p.default ? '?' : ''}: ${p.type || 'string'}`).join(', ')} }${defaulted ? ' = {}' : ''}): Promise<${query.result ? query.result : query.scalar ? loader.interface : query.owner.name}${query.singular ? '' : '[]'}> {
+    method: `  static async ${query.name}(con: dao.Connection, params: { ${(query.params || []).map(p => `${p.name}${p.optional || p.default ? '?' : ''}: ${p.type || 'string'}`).join(', ')} }${defaulted ? ' = {}' : ''}): Promise<${query.result ? query.result : query.scalar ? loader.interface : start.retype ? start.retype : query.owner.name}${query.singular ? '' : '[]'}> {
     let sql = __${query.name}_sql;
     const ps: any[] = [${getParamsValues(parms)}];
     ${parts.map((p, _i) => p.code).join('\n    ')}

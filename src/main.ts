@@ -245,16 +245,28 @@ export class Field {
 }
 
 export interface QueryOptions {
+  /** The method name for the query */
   name: string;
+  /** A list of parameters to be accepted as keys in a params object */
   params?: Param[];
+  /** The statement to run */
   sql: string;
+  /** The result mapping configuration for the query. Additional models and arrays of models can be included as joins, and individual fields can be appended to the various result types. */
   include?: IncludeMap;
+  /** Should this query only return a single model? */
   singular?: boolean;
+  /** If this query is singular, should it be allowed to return no result? */
   optional?: boolean;
+  /** Export a type for the result of the query */
   result?: string;
+  /** Modify the result type of the query */
+  retype?: string;
+  /** Should this query just return a field from the base table? */
   scalar?: string;
   extras?: OptionalExtras;
+  /** Additional models that need to be imported for this query */
   imports?: string[];
+  /** Conditional query parts that will be appended to the base sql based on parameters. The conditional keys are included as if statements that append the sql if they are truthy. */
   parts?: { [condition: string]: string };
 }
 
@@ -267,6 +279,7 @@ export class Query {
   singular?: boolean;
   optional?: boolean;
   result?: string;
+  retype?: string;
   scalar?: string;
   extras?: OptionalExtras;
   imports?: string[];
@@ -281,6 +294,7 @@ export class Query {
     this.singular = options.singular;
     this.optional = options.optional;
     this.result = options.result;
+    this.retype = options.retype;
     this.scalar = options.scalar;
     this.extras = options.extras;
     this.imports = options.imports;
