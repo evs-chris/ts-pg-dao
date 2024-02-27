@@ -303,14 +303,17 @@ async function commit(this: Connection) {
 
 async function transact<T>(this: Connection, cb: (con: Connection) => Promise<T>) {
   const init = !this.inTransaction;
-  if (init) await this.begin();
-  try {
-    const res = await cb(this);
-    if (init) await this.commit();
-    return res;
-  } catch (ex) {
-    if (init) await this.rollback(undefined, ex);
-    throw ex;
+  if (init) {
+    await this.begin();
+    try {
+      const res = await cb(this);
+      await this.commit();
+      return res;
+    } catch (e) {
+      await this.rollback(undefined, e);
+    }
+  } else {
+    cb(this);
   }
 }
 

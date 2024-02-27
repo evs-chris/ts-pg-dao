@@ -173,6 +173,11 @@ export async function write(config: BuiltConfig): Promise<void> {
 const dates = ['timestamp'];
 function serverModel(config: BuiltConfig, model: ProcessModel): string {
   let tpl = `import * as dao from '@evs-chris/ts-pg-dao/runtime';${model.extraImports && model.extraImports.length ? '\n' + model.extraImports.map(o => `import ${o} from './${o}';`).join('\n') + '\n' : ''}${model._imports.length ? '\n' + model._imports.join(';\n') + '\n' : ''}${model.serverOuter ? `\n${model.serverOuter}` : ''}
+
+const _saveHooks: Array<(model: ${model.name}, con: dao.Connection) => (Promise<void>|void)> = [];
+const _deleteHooks: Array<(model: ${model.name}, con: dao.Connection) => (Promise<void>|void)> = [];
+
+/** DAO model representing table ${model.table} */
 export default class ${model.name} {
   constructor(props?: Partial<${model.name}>) {
     if (props) Object.assign(this, props);
@@ -195,17 +200,24 @@ export default class ${model.name} {
 
   tpl += modelProps(config, model);
 
-  for (const [name, hook] of Object.entries(model.hooks)) {
-    if (typeof hook === 'function') {
-      tpl += `  protected static ${name}: (item: ${model.name}) => void = ${reindent(hook.toString(), '  ')}\n`;
-    }
+  tpl += `
+  /** Add a function to be called before any ${model.name} is written to the database. */
+  static onBeforeSave(hook: (model: ${model.name}, con: dao.Connection) => (Promise<void>|void)): void {
+    _saveHooks.push(hook);
   }
+
+  /** Add a function to be called before any ${model.name} is deleted from the database. */
+  static onBeforeDelete(hook: (model: ${model.name}, con: dao.Connection) => (Promise<void>|void)): void {
+    _deleteHooks.push(hook);
+  }
+`;
 
   if (hasPkey) {
     tpl += `
+  /** Persist a ${model.name} to table ${model.table}. If the model has primary key and/or optimistic lock fields in place, this will perform an update. Otherwise, it will perform an insert. */
   static async save(con: dao.Connection, model: ${model.name}): Promise<${model.name}> {
-    if (!model) throw new Error('Model is required');${model.hooks.beforesave ? `
-    ${model.name}.beforesave(model);` : ''}
+    if (!model) throw new Error('Model is required');
+    if (_saveHooks.length) for (const h of _saveHooks) await h(model, con);
 
     if (${model.fields.filter(f => f.pkey || f.optlock).map(f => `model.${f.name} !== undefined`).join(' && ')}) {${updateMembers(config, model, '      ')}
 
@@ -217,7 +229,7 @@ export default class ${model.name} {
         if (res.rowCount < 1) throw new Error('No matching row to update for ${model.name}');
         if (res.rowCount > 1) throw new Error('Too many matching rows updated for ${model.name}');
         if (transact) await con.commit();${changeFlag ? `
-        model.${changeFlag} = false;` : ''}
+        con.onCommit(() => model.${changeFlag} = false);` : ''}
       } catch (e) {
         if (transact) await con.rollback();
         throw e;
@@ -231,9 +243,10 @@ export default class ${model.name} {
     return model;
   }
 
+  /** Delete a ${model.name} from table ${model.table}. The model must have primary key and optimisitic lock fields in place. */
   static async delete(con: dao.Connection, model: ${model.name}): Promise<void> {
-    if (!model) throw new Error('Model is required');${model.hooks.beforedelete ? `
-    ${model.name}.beforeDelete(model);` : ''}
+    if (!model) throw new Error('Model is required');
+    if (_deleteHooks.length) for (const h of _deleteHooks) await h(model, con);
     ${model.fields.filter(f => ~dates.indexOf(f.cast || f.pgtype)).map(f => `if (typeof model.${f.name} === 'string') model.${f.name} = new Date(model.${f.name});
     `).join('')}
     const transact = !con.inTransaction;
@@ -250,8 +263,13 @@ export default class ${model.name} {
     }
   }
 
+  /** Delete a ${model.name} from table ${model.table} using only its primary key${model.pkeys.length > 1 ? 's' : ''}. This ignores any optimistic locking. */
   static async deleteById(con: dao.Connection, ${model.pkeys.map(k => `${k.alias || k.name}: ${k.retype || k.type}`).join(', ')}): Promise<boolean> {
     const params = [${model.pkeys.map(k => k.alias || k.name).join(', ')}];
+    if (_deleteHooks.length) {
+      const model = await ${model.name}.findOne(con, '${model.pkeys.map((k, i) => `${k.name} = $${i + 1}`).join(' AND ')}', params);
+      for (const h of _deleteHooks) await h(model, con);
+    }
     const res = await con.query(\`delete from "${model.table}" where ${model.pkeys.map((k, i) => `"${k.name}" = $${i + 1}`).join(' AND ')}\`, params);
     if (res.rowCount !== 1) return false;
     return true;
@@ -261,15 +279,18 @@ export default class ${model.name} {
     return await ${model.name}.findOne(con, '${model.pkeys.map((k, i) => `${k.name} = $${i + 1}`).join(' AND ')}', [${model.pkeys.map(k => k.alias || k.name).join(', ')}], optional)
   }
 
-  `}static keyString(row: any, prefix: string = ''): string {
+  `}
+  /** Generate a string that can represent this model in a map using a given prefix. */
+  static keyString(row: any, prefix: string = ''): string {
     return '${model.table}' + ${model.pkeys.map(k => `'_' + (prefix ? row[prefix + '${k.name}'] : row.${k.name})`).join(' + ')}
   }`;
   } else {
     tpl += `
+  /** Insert a ${model.name} into table ${model.table}. */
   static async insert(con: dao.Connection, model: ${model.name}): Promise<${model.name}> {
-    if (!model) throw new Error('Model is required');${model.hooks.beforesave ? `
-    ${model.name}.beforesave(model);
-    ` : ''}${model.fields.filter(f => ~dates.indexOf(f.cast || f.pgtype)).map(f => `if (typeof model.${f.name} === 'string') model.${f.name} = new Date(model.${f.name});
+    if (!model) throw new Error('Model is required');
+    if (_saveHooks.length) for (const h of _saveHooks) await h(model, con);
+    ${model.fields.filter(f => ~dates.indexOf(f.cast || f.pgtype)).map(f => `if (typeof model.${f.name} === 'string') model.${f.name} = new Date(model.${f.name});
     `).join('')}
     ${insertMembers(config, model, '    ')}${loadFlag ? `
     model.${loadFlag} = false;` : ''}
@@ -279,6 +300,11 @@ export default class ${model.name} {
   }
 
   tpl += `
+  /** Retrieve exactly one ${model.name} from the table ${model.table}. This will reject if more than one result is returned.
+   * @param where - sql clause *excluding* \`where\` to filter results
+   * @params - an array of values to pass with the where clause where the first element corresponds to \$1 in clause and the second corresponds to \$2, etc
+   * @param optional - if true will not reject if no rows are returned
+   */
   static async findOne(con: dao.Connection, where: string = '', params: any[] = [], optional: boolean = false): Promise<${model.name}> {
     const res = await ${model.name}.findAll(con, where, params);
     if (res.length < 1 && !optional) throw new Error('${model.name} not found')
@@ -286,12 +312,21 @@ export default class ${model.name} {
     return res[0];
   }
 
+  /** Retrieve zero or more ${model.name} from the table ${model.table}.
+   * @param where - sql clause *excluding* \`where\` to filter results
+   * @params - an array of values to pass with the where clause where the first element corresponds to \$1 in clause and the second corresponds to \$2, etc
+   */
   static async findAll(con: dao.Connection, where: string = '', params: any[] = []): Promise<${model.name}[]> {
     const res = await con.query('select ${model.select(config)} from "${model.table}"' + (where ? ' WHERE ' + where : ''), params);
     return res.rows.map(r => ${model.name}.load(r, new ${model.name}()));
   }
 
-  static load(row: any, model: any, prefix: string = '', cache: dao.Cache = null): any {
+  /** Populates ${model.name} from a result row, optionally using a cache to ensure that the same model is returned if the underlying row exists multiple times in the result set.
+   * @param model - the model to populate. If not provided, this will start with a new empty object.
+   * @param prefix - field prefix for model columns in the given row
+   * @param cache - a model cache, that if given, will be checked for an existing model matching the given row, and if none exists, will be used to store the result of this call
+   */
+  static load(row: any, model?: any, prefix: string = '', cache: dao.Cache = null): any {
     ${hasPkey ? `if (${model.pkeys.map(k => `row[prefix + ${JSON.stringify(k.name)}] == null`).join(' && ')}) return;
     if (cache && (model = cache[${model.name}.keyString(row, prefix)])) return model;
     ` : ''}if (!model) model = {};${hasPkey ? `
@@ -312,11 +347,12 @@ export default class ${model.name} {
 
   tpl += `
 
+  /** Ensures that all of the strings in the model fit within the bounds of the underlying column in the ${model.table} table. */
   static truncateStrings(model: ${model.name}) {`;
   const strs = ['char', 'varchar', 'bpchar'];
   for (const c of model.cols) {
     if (c.length && strs.includes(c.pgtype) && !c.retype) {
-      tpl += `\n    if (model.${c.alias || c.name} && model.${c.alias || c.name}.length > ${c.length}) model.${c.alias || c.name} = model.${c.alias || c.name}.substr(0, ${c.length});`;
+      tpl += `\n    if (model.${c.alias || c.name} && model.${c.alias || c.name}.length > ${c.length}) model.${c.alias || c.name} = model.${c.alias || c.name}.slice(0, ${c.length});`;
     }
   }
   tpl += `
@@ -333,6 +369,12 @@ export default class ${model.name} {
 
   if (model.codeMap.serverOuter) tpl += `\n\n${model.codeMap.serverOuter}\n`;
   if (model.codeMap.bothOuter) tpl += `\n\n${model.codeMap.bothOuter}\n`;
+
+  for (const [name, hook] of Object.entries(model.hooks)) {
+    if (typeof hook === 'function') {
+      tpl += `${model.name}.${name === 'beforesave' ? 'save' : 'delete'}Hooks.push(${reindent(hook.toString(), '  ')})\n`;
+    }
+  }
 
   return tpl;  
 }
@@ -352,11 +394,11 @@ function clientModel(config: Config, model: ProcessModel): string {
   const changeFlag = hasPkey && ((!model.flags.change && model.flags.change !== false) || model.flags.change) ? model.flags.change || '__changed' : '';
   const removeFlag = hasPkey && ((!model.flags.remove && model.flags.remove !== false) || model.flags.remove) ? model.flags.remove || '__removed' : '';
 
-  if (loadFlag) tpl += `  ${loadFlag}?: boolean;
+  if (loadFlag) tpl += `  /** This field is automatically set to true when the DAO populates an instance from the database. */\n  ${loadFlag}?: boolean;
 `;
-  if (changeFlag) tpl += `  ${changeFlag}?: boolean;
+  if (changeFlag) tpl += `  /** This field can be used to indicate that this model has been modified and needs to be saved. It is automatically set to false when the model is successfully persisted to the database. */\n  ${changeFlag}?: boolean;
 `;
-  if (removeFlag) tpl += `  ${removeFlag}?: boolean;
+  if (removeFlag) tpl += `  /** This field can be used to indicate that this model should be removed from the database. */\n  ${removeFlag}?: boolean;
 `;
 
   tpl += modelProps(config, model, true);
@@ -365,8 +407,34 @@ function clientModel(config: Config, model: ProcessModel): string {
   if (model.codeMap.bothInner) tpl += `\n\n${reindent(model.codeMap.bothInner, '  ')}\n`;
 
   tpl += `
-  static lengths = { ${model.cols.filter(c => c.length).map(c => `${c.alias || c.name}: ${c.length}`).join(', ')} };
-  static precisions = { ${model.cols.filter(c => c.precision).map(c => `${c.alias || c.name}: ${JSON.stringify(c.precision)}`).join(', ')} }\n`;
+  /** A map of column name to length for string columns in table ${model.table} */
+  static readonly lengths = { ${model.cols.filter(c => c.length).map(c => `${c.alias || c.name}: ${c.length}`).join(', ')} };
+  /** A map of column name to [scale, precision] for numeric columsn in table ${model.table} */
+  static readonly precisions = { ${model.cols.filter(c => c.precision).map(c => `${c.alias || c.name}: ${JSON.stringify(c.precision)}`).join(', ')} }
+  /** A map of all columns in table ${model.table}. This is reconstituted from the DAO configuration. */
+  static readonly columns: { [column: string]: {
+    name: string;
+    nullable: boolean;
+    elide?: boolean;
+    elidable?: boolean;
+    exclude?: boolean;
+    pgdefault?: string;
+    default?: string;
+    alias?: string;
+    pkey: boolean;
+    pgtype: string;
+    type: string;
+    retype?: string;
+    array?: boolean;
+    cast?: string;
+    json?: true;
+    optlock?: boolean;
+    enum?: string[];
+    trim?: boolean;
+    length?: number;
+    precision?: [number, number];
+  } } = { ${model.cols.map(c => `"${c.alias || c.name}": ${JSON.stringify(c)}`).join(', ')} };
+`;
 
   tpl += stripDates(config, model);
 
@@ -382,7 +450,8 @@ function stripDates(config: BuiltConfig, model: ProcessModel): string {
   let children: string[] = [];
   for (const k in model._extras) {
     let ck = `if ('${k}' in model && model['${k}']) `;
-    let e = model._extras[k];
+    const extra = model._extras[k];
+    let e = typeof extra === 'object' ? extra.type : extra;
     const arr = e.endsWith('[]');
     e = arr ? e.slice(0, -2) : e;
     if (!config.models.find(m => m.name === e)) continue;
@@ -391,7 +460,7 @@ function stripDates(config: BuiltConfig, model: ProcessModel): string {
     children.push(ck);
   }
   return `
-  /** Stringify dates so that they persist as entered without possible skew by timezone. */
+  /** Stringify dates so that they persist as entered without possible skew by timezone or mangle during JSON stringification. */
   static stripDates(model: ${model.name}) {${model.cols.filter(c => (c.cast || c.pgtype) === 'date').map(c => `
     if ((model.${c.alias || c.name} as any) instanceof Date) { const d = model.${c.alias || c.name} as any as Date; model.${c.alias || c.name} = \`\${('' + d.getFullYear()).padStart(4, '0')}-\${d.getMonth() < 9 ? '0' : ''}\${d.getMonth() + 1}-\${d.getDate() < 10 ? '0' : ''}\${d.getDate()}\` as any; }`).join('')}${
     children.length ? `
@@ -412,13 +481,13 @@ function modelProps(config: Config, model: Model, _client: boolean = false): str
   let col: Column;
   for (let c = 0; c < model.cols.length; c++) {
     col = model.cols[c];
-    tpl += `  ${col.alias || col.name}${col.nullable ? '?' : ''}: ${col.enum ? col.enum.map(v => `'${v}'`).join('|') : stringyDates(config, col.retype || col.type)}${col.default ? ` = ${col.default}` : ''};\n`;
+    tpl += `  /** ${col.pkey ? 'Primary key column' : col.optlock ? 'Optimistic lock column' : 'Field linked to column'} ${col.name} (${col.pgtype}${col.length != null ? `(${col.length})` : col.precision ? `(${col.precision.join(', ')})`: ''} ${col.nullable ? '' : 'not '}nullable${col.default ? ` default ${col.default}` : ''}) in table ${model.table} */\n  ${col.alias || col.name}${col.nullable ? '?' : ''}: ${col.enum ? col.enum.map(v => `'${v}'`).join('|') : stringyDates(config, col.retype || col.type)}${col.default ? ` = ${col.default}` : ''};\n`;
   }
 
   if (Object.keys(model._extras).length > 0) {
     tpl += '\n';
-    for (const [field, type] of Object.entries(model._extras)) {
-      tpl += `  ${field}?: ${type};\n`;
+    for (const [field, extra] of Object.entries(model._extras)) {
+      tpl += `${typeof extra === 'object' && extra.comment ? `  /** ${extra.comment} */\n` : ''}  ${field}?: ${typeof extra === 'object' ? extra.type : extra};\n`;
     }
   }
 
@@ -479,7 +548,7 @@ function setParam(col: Column, prefix: string, set: string, model: string = 'mod
       cond += `\n${prefix}  if ((${model}.${col.alias || col.name} as any) === '') { ${params}.push(null); ${set}; }\n${prefix}  else { ${params}.push(${colToParam(col)}); ${set}; }\n${prefix}`;
     } else if (col.default) {
       cond += `\n${prefix}  if ((${model}.${col.alias || col.name} as any) === '') { ${params}.push(${col.default}); ${set}; }\n${prefix}  else { ${params}.push(${colToParam(col)}); ${set}; }\n${prefix}`;
-    } else if (col.pgtype.substr(0, 3) === 'int' || col.pgtype === 'numeric' || col.pgtype.substr(0, 5) === 'float') {
+    } else if (col.pgtype.slice(0, 3) === 'int' || col.pgtype === 'numeric' || col.pgtype.slice(0, 5) === 'float') {
       cond += `\n${prefix}  if ((${model}.${col.alias || col.name} as any) === '') { ${params}.push(0); ${set}; }\n${prefix}  else { ${params}.push(${colToParam(col)}); ${set}; }\n${prefix}`;
     } else {
       cond += `${params}.push(${colToParam(col)}); ${set}; `;

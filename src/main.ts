@@ -1,6 +1,7 @@
 import * as pg from 'pg';
 import * as fs from 'fs-extra';
 export { PatchOptions, PatchResult, patchConfig, calcDropRestore } from './patch';
+import { Connection } from './index';
 
 export interface Config {
   output: Output;
@@ -32,7 +33,7 @@ export interface ModelOpts {
   file?: string;
 }
 
-export type Hook = (model: any) => void;
+export type Hook = (model: any, con: Connection) => void;
 export interface Hooks {
   beforesave?: Hook;
   beforedelete?: Hook;
@@ -45,7 +46,7 @@ export interface StatusFlags {
 }
 
 export interface OptionalExtras {
-  [field: string]: string;
+  [field: string]: string|{ type: string; comment?: string };
 }
 
 export interface CodeMap {
