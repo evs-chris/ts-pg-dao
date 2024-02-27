@@ -313,7 +313,7 @@ async function transact<T>(this: Connection, cb: (con: Connection) => Promise<T>
       await this.rollback(undefined, e);
     }
   } else {
-    cb(this);
+    return cb(this);
   }
 }
 
