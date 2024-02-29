@@ -311,6 +311,7 @@ async function transact<T>(this: Connection, cb: (con: Connection) => Promise<T>
       return res;
     } catch (e) {
       await this.rollback(undefined, e);
+      throw e;
     }
   } else {
     return cb(this);
