@@ -226,8 +226,18 @@ export default class ${model.name} {
       if (transact) await con.begin();
       try {
         res = await con.query(sql, params);
-        if (res.rowCount < 1) throw new Error('No matching row to update for ${model.name}');
-        if (res.rowCount > 1) throw new Error('Too many matching rows updated for ${model.name}');
+        if (res.rowCount < 1) ${(!model.fields.find(f => f.optlock) || !model.fields.find(f => f.pkey)) ? `throw new Error('No matching row to update for ${model.name}');` : `{
+          const err = new Error('No matching row to update for ${model.name}');
+          try {
+            const rec = await ${model.name}.findOne(con, '${model.pkeys.map((k, i) => `${k.name} = $${i + 1}`).join(' AND ')}', [${model.pkeys.map(k => k.alias || k.name).join(', ')}], true);
+            if (rec) {
+              err.daoFields = {};${model.fields.filter(f => f.optlock || f.pkey).map(f => `
+              err.daoFields['${f.alias || f.name}'] = rec['${f.alias || f.name}'];`).join('')}
+            }
+          } catch {}
+          throw err;
+        }`}
+        if (res.rowCount > 1) throw new Error(\`Too many matching rows updated for ${model.name} (\${res.rowCount})\`);
         if (transact) await con.commit();${changeFlag ? `
         con.onCommit(() => model.${changeFlag} = false);` : ''}
       } catch (e) {
@@ -255,7 +265,7 @@ export default class ${model.name} {
       const params = [${model.fields.filter(f => f.pkey || f.optlock).map(f => `model.${f.name}`).join(', ')}];
       const res = await con.query(\`delete from "${model.table}" where ${model.fields.filter(f => f.pkey || f.optlock).map((f, i) => `${f.optlock ? `$\{params[${i}] == null ? \`"${f.name}" is null\` : \`date_trunc('millisecond', "${f.name}"${model.cast(config, f)})\`}` : `"${f.name}"`} = $${i + 1}`).join(' AND ')}\`, params);
       if (res.rowCount < 1) throw new Error('No matching row to delete for ${model.name}');
-      if (res.rowCount > 1) throw new Error('Too many matching rows deleted for ${model.name}');
+      if (res.rowCount > 1) throw new Error(\`Too many matching rows deleted for ${model.name} (\${res.rowCount})\`);
       if (transact) await con.commit();
     } catch (e) {
       if (transact) await con.rollback();
@@ -308,7 +318,7 @@ export default class ${model.name} {
   static async findOne(con: dao.Connection, where: string = '', params: any[] = [], optional: boolean = false): Promise<${model.name}> {
     const res = await ${model.name}.findAll(con, where, params);
     if (res.length < 1 && !optional) throw new Error('${model.name} not found')
-    if (res.length > 1) throw new Error('Too many results found');
+    if (res.length > 1) throw new Error(\`Too many results found for ${model.name} (\${res.length})\`);
     return res[0];
   }
 
@@ -856,7 +866,7 @@ function buildLoader(query: ProcessQuery): { loader: string, interface: string }
     if (res.length < 1) throw new Error('${query.owner.name} not found');`;
     }
     tpl += `
-    if (res.length > 1) throw new Error('Too many ${query.owner.name} results found');
+    if (res.length > 1) throw new Error(\`Too many ${query.owner.name} results found (\${res.length})\`);
     return res[0];`;
   } else {
     tpl += `
