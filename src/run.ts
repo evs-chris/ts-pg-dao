@@ -229,7 +229,7 @@ export default class ${model.name} {
         if (res.rowCount < 1) ${(!model.fields.find(f => f.optlock) || !model.fields.find(f => f.pkey)) ? `throw new Error('No matching row to update for ${model.name}');` : `{
           const err = new Error('No matching row to update for ${model.name}');
           try {
-            const rec = await ${model.name}.findOne(con, '${model.pkeys.map((k, i) => `${k.name} = $${i + 1}`).join(' AND ')}', [${model.pkeys.map(k => k.alias || k.name).join(', ')}], true);
+            const rec = await ${model.name}.findOne(con, '${model.pkeys.map((k, i) => `${k.name} = $${i + 1}`).join(' AND ')}', [${model.pkeys.map(k => `model.${k.alias || k.name}`).join(', ')}], true);
             if (rec) {
               (err as any).daoFields = {};${model.fields.filter(f => f.optlock || f.pkey).map(f => `
               (err as any).daoFields['${f.alias || f.name}'] = rec['${f.alias || f.name}'];`).join('')}
