@@ -231,8 +231,8 @@ export default class ${model.name} {
           try {
             const rec = await ${model.name}.findOne(con, '${model.pkeys.map((k, i) => `${k.name} = $${i + 1}`).join(' AND ')}', [${model.pkeys.map(k => k.alias || k.name).join(', ')}], true);
             if (rec) {
-              err.daoFields = {};${model.fields.filter(f => f.optlock || f.pkey).map(f => `
-              err.daoFields['${f.alias || f.name}'] = rec['${f.alias || f.name}'];`).join('')}
+              (err as any).daoFields = {};${model.fields.filter(f => f.optlock || f.pkey).map(f => `
+              (err as any).daoFields['${f.alias || f.name}'] = rec['${f.alias || f.name}'];`).join('')}
             }
           } catch {}
           throw err;
