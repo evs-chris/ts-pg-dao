@@ -44,6 +44,12 @@ export interface Connection extends pg.Client {
    */
   lit(sql: string): SQL;
   /**
+   * Execute the given callback immediately before the current transaction
+   * commits. If there is no current transaction, the callback will be run
+   * immediately. If the callback throws, it will abort the committing transaction.
+   * */
+  onBeforeCommit<T extends void|Promise<void>>(run: TransactionCallback<T>): T;
+  /**
    * Execute the given callback immediately after the current transaction
    * commits. If there is no current transaction, the callback will be run
    * immediately.
@@ -76,6 +82,16 @@ export interface Connection extends pg.Client {
    * Enhanced connection settings and information
    */
   readonly [cfgprop]: EnhanceInfo;
+
+  /**
+   * On-demand data storage for a transaction.
+   */
+  readonly txData?: { [key: string]: any };
+}
+
+export interface TransactingConnection extends Connection {
+  inTransaction: true;
+  readonly txData: { [key: string]: any };
 }
 
 export interface EnhanceInfo {
@@ -86,11 +102,13 @@ export interface EnhanceInfo {
 }
 
 interface InternalInfo extends EnhanceInfo {
+  __onbeforecommit?: TransactionCallback<void|Promise<void>>[];
   __oncommit?: ConnectionCallback[];
   __onrollback?: RollbackCallback[];
   __onend?: EndCallback[];
   __onresult?: ResultCallback[];
   __savepoint?: number;
+  __txdata?: { [key: string]: any };
 }
 
 /**
@@ -101,6 +119,7 @@ export interface HookHandle {
 }
 
 export type ConnectionCallback = (con: Connection, err?: Error) => void;
+export type TransactionCallback<T extends void|Promise<void>> = (con: Connection) => T;
 export type RollbackCallback = (con: Connection, err?: Error, savepoint?: SavePoint) => void;
 export type ResultCallback = (con: Connection, query: string, params: any[], ok: boolean, result: Error|pg.QueryResult, time: number) => void;
 export type EndCallback = (con: Connection, err?: Error, end?: boolean) => void;
@@ -169,10 +188,18 @@ export function enhance(client: pg.Client|pg.ClientConfig): Connection {
   db.transact = transact;
   db.sql = sql;
   db.lit = lit;
+  db.onBeforeCommit = onBeforeCommit;
   db.onCommit = onCommit;
   db.onRollback = onRollback;
   db.onResult = _onResult;
   db.onEnd = _onEnd;
+
+  Object.defineProperty(db, 'txData', {
+    get() {
+      if (!db.__txdata && db.inTransaction) db.__txdata = {};
+      return db.__txdata;
+    }
+  });
 
   const query = db.query;
   db.query = function(...args: any[]):any {
@@ -286,27 +313,28 @@ async function rollback(this: Connection, point?: SavePoint, err?: Error) {
   // process rollback callbacks
   if (Array.isArray(t.__onrollback)) for (const r of t.__onrollback) try { r(this, err); } catch {}
   // discard callbacks
-  t.__oncommit = t.__onrollback = undefined;
+  t.__txdata = t.__onbeforecommit = t.__oncommit = t.__onrollback = undefined;
   this.inTransaction = false;
 }
 
 async function commit(this: Connection) {
   if (!this.inTransaction) throw new Error(`Can't commit when not in transaction`);
-  await this.query('commit');
   const t = this[cfgprop] as InternalInfo;
+  if (Array.isArray(t.__onbeforecommit)) for (const r of t.__onbeforecommit) await r(this);
+  await this.query('commit');
   // process commit callbacks
   if (Array.isArray(t.__oncommit)) for (const r of t.__oncommit) try { r(this); } catch {}
   // discard callbacks
-  t.__oncommit = t.__onrollback = undefined;
+  t.__txdata = t.__onbeforecommit = t.__oncommit = t.__onrollback = undefined;
   this.inTransaction = false;
 }
 
-async function transact<T>(this: Connection, cb: (con: Connection) => Promise<T>) {
+async function transact<T>(this: Connection, cb: (con: TransactingConnection) => Promise<T>) {
   const init = !this.inTransaction;
   if (init) {
     await this.begin();
     try {
-      const res = await cb(this);
+      const res = await cb(this as any);
       await this.commit();
       return res;
     } catch (e) {
@@ -314,7 +342,7 @@ async function transact<T>(this: Connection, cb: (con: Connection) => Promise<T>
       throw e;
     }
   } else {
-    return cb(this);
+    return cb(this as any);
   }
 }
 
@@ -331,6 +359,14 @@ async function sql(this: Connection, strings: TemplateStringsArray, ...parts: an
   }
 
   return this.query(sql, params);
+}
+
+function onBeforeCommit<T extends void|Promise<void>>(this: Connection, run: TransactionCallback<T>): T {
+  if (!this.inTransaction) return run(this);
+  else {
+    const t = this[cfgprop] as InternalInfo;
+    (t.__onbeforecommit || (t.__onbeforecommit = [])).push(run);
+  }
 }
 
 function onCommit(this: Connection, run: ConnectionCallback): void {
@@ -393,4 +429,19 @@ function lit(sql: string): SQL {
 
 export interface Cache {
   [key: string]: any;
+}
+
+export interface Model<T> {
+  new (props?: Partial<T>): T;
+  readonly table: string;
+  readonly keys: string[];
+  onBeforeSave(hook: (model: T, con: Connection) => (Promise<void>|void)): void;
+  onBeforeDelete(hook: (model: T, con: Connection) => (Promise<void>|void)): void;
+  save(con: Connection, model: T): Promise<T>;
+  delete(con: Connection, model: T): Promise<void>;
+  findCurrent(con: Connection, model: T): Promise<T>;
+  findOne(con: Connection, where?: string, params?: any[], optional?: boolean): Promise<T>;
+  findAll(con: Connection, where?: string, params?: any[]): Promise<T[]>;
+  truncateStrings(model: T): void;
+  stripDates(model: T): void;
 }

@@ -183,6 +183,8 @@ export default class ${model.name} {
     if (props) Object.assign(this, props);
   }
   static get table() { return ${JSON.stringify(model.table)}; }
+  static get keys() { return ${JSON.stringify(model.pkeys.map(f => f.alias || f.name))}; }
+  static get locks() { return ${JSON.stringify(model.fields.filter(f => f.optlock).map(f => f.alias || f.name))}; }
 `;
 
   const hasPkey = model.pkeys.length;
@@ -288,8 +290,12 @@ export default class ${model.name} {
   ${model.queries.find(q => q.name === 'findById') ? '' : `static async findById(con: dao.Connection, ${model.pkeys.map(k => `${k.alias || k.name}: ${k.retype || k.type}`).join(', ')}, optional: boolean = false): Promise<${model.name}> {
     return await ${model.name}.findOne(con, '${model.pkeys.map((k, i) => `${k.name} = $${i + 1}`).join(' AND ')}', [${model.pkeys.map(k => k.alias || k.name).join(', ')}], optional)
   }
-
   `}
+  ${model.pkeys.length ? `/** Load a new copy of a model as it exists currently in the database. */
+  static async findCurrent(con: dao.Connection, model: ${model.name}): Promise<${model.name}> {
+    return await ${model.name}.findOne(con, '${model.pkeys.map((k, i) => `${k.name} = $${i + 1}`).join(' AND ')}', [${model.pkeys.map(k => `model.${k.alias || k.name}`).join(', ')}]);
+  }
+  ` : ''}
   /** Generate a string that can represent this model in a map using a given prefix. */
   static keyString(row: any, prefix: string = ''): string {
     return '${model.table}' + ${model.pkeys.map(k => `'_' + (prefix ? row[prefix + '${k.name}'] : row.${k.name})`).join(' + ')}
